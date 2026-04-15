@@ -1,4 +1,5 @@
-import type { LeaveSummary } from "../../src/types";
+import { getApprovalStages, getStatusAfterStage } from "../../src/lib/approval-flow";
+import type { LeaveSummary, UserRole } from "../../src/types";
 import type { LeaveStatus, LeaveType } from "./db";
 
 const DAY_MS = 86400000;
@@ -77,20 +78,24 @@ export function consumesAnnualBalance(type: LeaveType) {
 
 export function buildLeaveSummary(
   joinedAt: string,
+  role: UserRole,
+  hasLeader: boolean,
   rows: Array<{ type: LeaveType; status: LeaveStatus; amount: number }>,
 ) {
   const cycle = calculateLeaveCycle(joinedAt);
+  const stages = getApprovalStages(role, hasLeader);
+  const finalStatus = getStatusAfterStage(stages[stages.length - 1]);
   let used = 0;
   let pending = 0;
 
   for (const row of rows) {
-    if (!consumesAnnualBalance(row.type)) {
+    if (!consumesAnnualBalance(row.type) || row.status === "REJECTED") {
       continue;
     }
 
-    if (row.status === "APPROVED_HR") {
+    if (row.status === finalStatus) {
       used += row.amount;
-    } else if (row.status === "PENDING" || row.status === "APPROVED_LEADER") {
+    } else {
       pending += row.amount;
     }
   }

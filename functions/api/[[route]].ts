@@ -1,13 +1,17 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { getNextPendingStage, getStatusAfterStage } from "../../src/lib/approval-flow";
 import { authGuard, clearSession, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
 import {
   getEmployeeByEmployeeNo,
   getEmployeeById,
   getLeaveRequestRowById,
+  getNoticeById,
   insertLeaveRequest,
+  insertNotice,
   listCycleLeaveRows,
-  listHistoryForEmployee,
+  listHistoryVisibleToActor,
+  listNotices,
   listPendingApprovalsForActor,
   toLeaveItem,
   updateLeaveRequestStatus,
@@ -47,6 +51,11 @@ const approvalSchema = z.object({
   note: z.string().trim().max(500).optional(),
 });
 
+const noticeSchema = z.object({
+  title: z.string().trim().min(2).max(80),
+  content: z.string().trim().min(2).max(1000),
+});
+
 const app = new Hono<AppEnv>();
 
 app.use("*", async (c, next) => {
@@ -54,7 +63,7 @@ app.use("*", async (c, next) => {
   c.header("Cache-Control", "no-store");
 });
 
-app.get("/api/health", (c) => c.json({ ok: true, date: "2026-04-09" }));
+app.get("/api/health", (c) => c.json({ ok: true, date: "2026-04-16" }));
 
 app.post("/api/auth/login", async (c) => {
   try {
@@ -90,6 +99,28 @@ app.get("/api/auth/session", authGuard(), async (c) => {
   return c.json({ user: serializeEmployee(c.get("employee")) });
 });
 
+app.get("/api/notices", authGuard(), async (c) => {
+  const items = await listNotices(c.env.DB);
+  return c.json({ items });
+});
+
+app.post("/api/notices", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"]), async (c) => {
+  const actor = c.get("employee");
+  const body = noticeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) {
+    return c.json({ message: "공지 제목과 내용을 다시 확인해주세요." }, 400);
+  }
+
+  const noticeId = await insertNotice(c.env.DB, {
+    title: body.data.title,
+    content: body.data.content,
+    authorId: actor.id,
+  });
+
+  const notice = await getNoticeById(c.env.DB, noticeId);
+  return c.json({ item: notice ?? null }, 201);
+});
+
 app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {
   const actor = c.get("employee");
   const employeeId = Number(c.req.param("employeeId"));
@@ -108,12 +139,12 @@ app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {
 
   const cycle = calculateLeaveCycle(employee.joined_at);
   const rows = await listCycleLeaveRows(c.env.DB, employeeId, cycle.cycleStart, cycle.cycleEnd);
-  return c.json(buildLeaveSummary(employee.joined_at, rows));
+  return c.json(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows));
 });
 
 app.get("/api/leave/history", authGuard(), async (c) => {
-  const employee = c.get("employee");
-  const items = await listHistoryForEmployee(c.env.DB, employee.id);
+  const actor = c.get("employee");
+  const items = await listHistoryVisibleToActor(c.env.DB, actor);
   return c.json({ items });
 });
 
@@ -144,7 +175,7 @@ app.post("/api/leave/request", authGuard(), async (c) => {
   if (consumesAnnualBalance(body.data.type)) {
     cycle = calculateLeaveCycle(employee.joined_at);
     const rows = await listCycleLeaveRows(c.env.DB, employee.id, cycle.cycleStart, cycle.cycleEnd);
-    const summary = buildLeaveSummary(employee.joined_at, rows);
+    const summary = buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows);
     if (summary.remaining < amount) {
       return c.json({ message: "잔여 연차가 부족합니다." }, 400);
     }
@@ -171,6 +202,36 @@ app.post("/api/leave/request", authGuard(), async (c) => {
   return c.json({ item: row ? toLeaveItem(row) : null }, 201);
 });
 
+function ensureActorMatchesStage(actor: EmployeeRecord, owner: EmployeeRecord, requestId: number, stage: ReturnType<typeof getNextPendingStage>) {
+  if (!stage) {
+    return { ok: false, message: "이미 최종 처리된 신청입니다." };
+  }
+
+  if (stage === "LEADER") {
+    if (actor.role !== "LEADER") {
+      return { ok: false, message: "팀장 승인 단계의 신청입니다." };
+    }
+
+    if (owner.id === actor.id) {
+      return { ok: false, message: "본인 신청은 직접 승인할 수 없습니다." };
+    }
+
+    if (owner.leader_id !== actor.id) {
+      return { ok: false, message: "담당 팀장만 이 신청을 승인할 수 있습니다." };
+    }
+  }
+
+  if (stage === "HR" && !["HR", "ADMIN"].includes(actor.role)) {
+    return { ok: false, message: "인사 승인 단계의 신청입니다." };
+  }
+
+  if (stage === "DIRECTOR" && actor.role !== "DIRECTOR") {
+    return { ok: false, message: "원장 승인 단계의 신청입니다." };
+  }
+
+  return { ok: true, requestId };
+}
+
 app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"]), async (c) => {
   const actor = c.get("employee");
   const body = approvalSchema.safeParse(await c.req.json().catch(() => null));
@@ -188,47 +249,27 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
     return c.json({ message: "신청자 정보를 찾을 수 없습니다." }, 404);
   }
 
-  if (actor.role === "LEADER" && row.emp_id === actor.id) {
-    return c.json({ message: "본인 신청은 직접 승인할 수 없습니다." }, 403);
+  const currentStage = getNextPendingStage(requestOwner.role, requestOwner.leader_id !== null, row.status);
+  const stageCheck = ensureActorMatchesStage(actor, requestOwner, body.data.requestId, currentStage);
+  if (!stageCheck.ok) {
+    return c.json({ message: stageCheck.message }, 403);
   }
 
-  if (actor.role === "LEADER" && requestOwner.leader_id !== actor.id) {
-    return c.json({ message: "팀장 권한으로 처리할 수 없는 신청입니다." }, 403);
-  }
-
-  let nextStatus: LeaveStatus;
+  let nextStatus: LeaveStatus = "REJECTED";
   let leaderId: number | null = null;
   let hrId: number | null = null;
+  let directorId: number | null = null;
 
-  if (body.data.action === "REJECT") {
-    if (actor.role === "LEADER" && row.status !== "PENDING") {
-      return c.json({ message: "팀장은 신규 신청만 반려할 수 있습니다." }, 400);
-    }
-
-    nextStatus = "REJECTED";
-    if (actor.role === "LEADER") {
-      leaderId = actor.id;
-    } else {
-      hrId = actor.id;
-    }
-  } else if (actor.role === "LEADER") {
-    if (row.status !== "PENDING") {
-      return c.json({ message: "이미 처리된 신청입니다." }, 400);
-    }
-
-    nextStatus = "APPROVED_LEADER";
+  if (currentStage === "LEADER") {
     leaderId = actor.id;
-  } else if (actor.role === "HR") {
-    if (row.status !== "APPROVED_LEADER") {
-      return c.json({ message: "HR은 1차 승인된 신청만 최종 처리할 수 있습니다." }, 400);
-    }
+  } else if (currentStage === "HR") {
+    hrId = actor.id;
+  } else if (currentStage === "DIRECTOR") {
+    directorId = actor.id;
+  }
 
-    nextStatus = "APPROVED_HR";
-    hrId = actor.id;
-  } else {
-    nextStatus = "APPROVED_HR";
-    leaderId = row.status === "PENDING" ? actor.id : null;
-    hrId = actor.id;
+  if (body.data.action === "APPROVE") {
+    nextStatus = getStatusAfterStage(currentStage!);
   }
 
   const updatedOk = await updateLeaveRequestStatus(c.env.DB, {
@@ -237,6 +278,7 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
     status: nextStatus,
     leaderId,
     hrId,
+    directorId,
     actorId: actor.id,
     eventAction: body.data.action === "APPROVE" ? "REQUEST_APPROVED" : "REQUEST_REJECTED",
     note: body.data.note,

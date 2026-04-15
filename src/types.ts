@@ -1,6 +1,6 @@
 export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
 export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK";
-export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "REJECTED";
+export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED";
 
 export interface SessionUser {
   id: number;
@@ -30,6 +30,8 @@ export interface LeaveRequestItem {
   employeeNo: string;
   employeeName: string;
   teamName: string;
+  requesterRole: UserRole;
+  requesterHasLeader: boolean;
   type: LeaveType;
   startDate: string;
   endDate: string;
@@ -39,6 +41,7 @@ export interface LeaveRequestItem {
   createdAt: string;
   leaderName?: string | null;
   hrName?: string | null;
+  directorName?: string | null;
 }
 
 export interface LeaveRequestInput {
@@ -56,4 +59,13 @@ export interface ApprovalActionInput {
 
 export interface AuthResponse {
   user: SessionUser;
+}
+
+export interface NoticeItem {
+  id: number;
+  title: string;
+  content: string;
+  authorName: string;
+  authorRole: UserRole;
+  createdAt: string;
 }

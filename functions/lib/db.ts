@@ -1,8 +1,9 @@
-import type { LeaveRequestItem, SessionUser } from "../../src/types";
+import { getNextPendingStage } from "../../src/lib/approval-flow";
+import type { LeaveRequestItem, NoticeItem, SessionUser } from "../../src/types";
 
 export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
 export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK";
-export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "REJECTED";
+export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED";
 
 export interface EmployeeRecord {
   id: number;
@@ -25,6 +26,9 @@ export interface LeaveRow {
   employee_no: string;
   employee_name: string;
   team_name: string | null;
+  requester_role: UserRole;
+  requester_has_leader: number;
+  requester_leader_id: number | null;
   type: LeaveType;
   start_date: string;
   end_date: string;
@@ -34,7 +38,45 @@ export interface LeaveRow {
   created_at: string;
   leader_name: string | null;
   hr_name: string | null;
+  director_name: string | null;
 }
+
+interface NoticeRow {
+  id: number;
+  title: string;
+  content: string;
+  created_at: string;
+  author_name: string;
+  author_role: UserRole;
+}
+
+const leaveSelect = `
+  SELECT
+    lr.id,
+    lr.emp_id,
+    e.employee_no,
+    e.name AS employee_name,
+    team.name AS team_name,
+    e.role AS requester_role,
+    CASE WHEN e.leader_id IS NOT NULL THEN 1 ELSE 0 END AS requester_has_leader,
+    e.leader_id AS requester_leader_id,
+    lr.type,
+    lr.start_date,
+    lr.end_date,
+    lr.amount,
+    lr.reason,
+    lr.status,
+    lr.created_at,
+    leader.name AS leader_name,
+    hr.name AS hr_name,
+    director.name AS director_name
+  FROM leave_requests lr
+  INNER JOIN employees e ON e.id = lr.emp_id
+  LEFT JOIN employees leader ON leader.id = lr.approved_leader_id
+  LEFT JOIN employees hr ON hr.id = lr.approved_hr_id
+  LEFT JOIN employees director ON director.id = lr.approved_director_id
+  LEFT JOIN org_units team ON team.id = e.org_unit_id
+`;
 
 export async function getEmployeeByEmployeeNo(db: D1Database, employeeNo: string) {
   return db
@@ -107,110 +149,56 @@ export async function listCycleLeaveRows(db: D1Database, employeeId: number, cyc
   return result.results;
 }
 
-export async function listHistoryForEmployee(db: D1Database, employeeId: number) {
-  const result = await db
-    .prepare(
-      `
-        SELECT
-          lr.id,
-          lr.emp_id,
-          e.employee_no,
-          e.name AS employee_name,
-          team.name AS team_name,
-          lr.type,
-          lr.start_date,
-          lr.end_date,
-          lr.amount,
-          lr.reason,
-          lr.status,
-          lr.created_at,
-          leader.name AS leader_name,
-          hr.name AS hr_name
-        FROM leave_requests lr
-        INNER JOIN employees e ON e.id = lr.emp_id
-        LEFT JOIN employees leader ON leader.id = lr.approved_leader_id
-        LEFT JOIN employees hr ON hr.id = lr.approved_hr_id
-        LEFT JOIN org_units team ON team.id = e.org_unit_id
-        WHERE lr.emp_id = ?
-        ORDER BY lr.created_at DESC
-      `,
-    )
-    .bind(employeeId)
-    .all<LeaveRow>();
-
-  return result.results.map(toLeaveItem);
-}
-
-export async function listPendingApprovalsForActor(db: D1Database, actor: EmployeeRecord) {
-  let sql = `
-    SELECT
-      lr.id,
-      lr.emp_id,
-      e.employee_no,
-      e.name AS employee_name,
-      team.name AS team_name,
-      lr.type,
-      lr.start_date,
-      lr.end_date,
-      lr.amount,
-      lr.reason,
-      lr.status,
-      lr.created_at,
-      leader.name AS leader_name,
-      hr.name AS hr_name
-    FROM leave_requests lr
-    INNER JOIN employees e ON e.id = lr.emp_id
-    LEFT JOIN employees leader ON leader.id = lr.approved_leader_id
-    LEFT JOIN employees hr ON hr.id = lr.approved_hr_id
-    LEFT JOIN org_units team ON team.id = e.org_unit_id
-  `;
-
+export async function listHistoryVisibleToActor(db: D1Database, actor: EmployeeRecord) {
+  let sql = leaveSelect;
   const bindings: Array<number | string> = [];
 
-  if (actor.role === "LEADER") {
-    sql += " WHERE lr.status = 'PENDING' AND e.leader_id = ? AND lr.emp_id != ?";
+  if (actor.role === "USER") {
+    sql += " WHERE lr.emp_id = ?";
+    bindings.push(actor.id);
+  } else if (actor.role === "LEADER") {
+    sql += " WHERE lr.emp_id = ? OR e.leader_id = ?";
     bindings.push(actor.id, actor.id);
-  } else if (actor.role === "HR") {
-    sql += " WHERE lr.status = 'APPROVED_LEADER'";
-  } else if (actor.role === "ADMIN" || actor.role === "DIRECTOR") {
-    sql += " WHERE lr.status IN ('PENDING', 'APPROVED_LEADER')";
-  } else {
-    return [];
   }
 
-  sql += " ORDER BY lr.created_at ASC";
+  sql += " ORDER BY lr.created_at DESC";
 
   const result = await db.prepare(sql).bind(...bindings).all<LeaveRow>();
   return result.results.map(toLeaveItem);
 }
 
+function canActorApproveRow(actor: EmployeeRecord, row: LeaveRow) {
+  const nextStage = getNextPendingStage(row.requester_role, row.requester_has_leader === 1, row.status);
+  if (!nextStage) {
+    return false;
+  }
+
+  if (nextStage === "LEADER") {
+    return actor.role === "LEADER" && row.requester_leader_id === actor.id && row.emp_id !== actor.id;
+  }
+
+  if (nextStage === "HR") {
+    return actor.role === "HR" || actor.role === "ADMIN";
+  }
+
+  return actor.role === "DIRECTOR";
+}
+
+export async function listPendingApprovalsForActor(db: D1Database, actor: EmployeeRecord) {
+  if (!["LEADER", "HR", "ADMIN", "DIRECTOR"].includes(actor.role)) {
+    return [];
+  }
+
+  const result = await db
+    .prepare(`${leaveSelect} WHERE lr.status IN ('PENDING', 'APPROVED_LEADER', 'APPROVED_HR') ORDER BY lr.created_at ASC`)
+    .all<LeaveRow>();
+
+  return result.results.filter((row) => canActorApproveRow(actor, row)).map(toLeaveItem);
+}
+
 export async function getLeaveRequestRowById(db: D1Database, requestId: number) {
   return db
-    .prepare(
-      `
-        SELECT
-          lr.id,
-          lr.emp_id,
-          e.employee_no,
-          e.name AS employee_name,
-          team.name AS team_name,
-          lr.type,
-          lr.start_date,
-          lr.end_date,
-          lr.amount,
-          lr.reason,
-          lr.status,
-          lr.created_at,
-          leader.name AS leader_name,
-          hr.name AS hr_name
-        FROM leave_requests lr
-        INNER JOIN employees e ON e.id = lr.emp_id
-        LEFT JOIN employees leader ON leader.id = lr.approved_leader_id
-        LEFT JOIN employees hr ON hr.id = lr.approved_hr_id
-        LEFT JOIN org_units team ON team.id = e.org_unit_id
-        WHERE lr.id = ?
-      `,
-    )
+    .prepare(`${leaveSelect} WHERE lr.id = ?`)
     .bind(requestId)
     .first<LeaveRow>();
 }
@@ -249,8 +237,7 @@ export async function insertLeaveRequest(
                 (
                   SELECT SUM(
                     CASE
-                      WHEN type != 'SICK' AND status = 'APPROVED_HR' THEN amount
-                      WHEN type != 'SICK' AND status IN ('PENDING', 'APPROVED_LEADER') THEN amount
+                      WHEN type != 'SICK' AND status != 'REJECTED' THEN amount
                       ELSE 0
                     END
                   )
@@ -305,6 +292,7 @@ export async function updateLeaveRequestStatus(
     status: LeaveStatus;
     leaderId?: number | null;
     hrId?: number | null;
+    directorId?: number | null;
     actorId: number;
     eventAction: string;
     note?: string;
@@ -319,6 +307,7 @@ export async function updateLeaveRequestStatus(
             status = ?,
             approved_leader_id = COALESCE(?, approved_leader_id),
             approved_hr_id = COALESCE(?, approved_hr_id),
+            approved_director_id = COALESCE(?, approved_director_id),
             approval_note = COALESCE(?, approval_note),
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -329,6 +318,7 @@ export async function updateLeaveRequestStatus(
         input.status,
         input.leaderId ?? null,
         input.hrId ?? null,
+        input.directorId ?? null,
         input.note ?? null,
         input.requestId,
         input.currentStatus,
@@ -347,6 +337,69 @@ export async function updateLeaveRequestStatus(
   return updateResult.meta.changes > 0;
 }
 
+export async function listNotices(db: D1Database) {
+  const result = await db
+    .prepare(
+      `
+        SELECT
+          n.id,
+          n.title,
+          n.content,
+          n.created_at,
+          e.name AS author_name,
+          e.role AS author_role
+        FROM notices n
+        INNER JOIN employees e ON e.id = n.author_id
+        ORDER BY n.created_at DESC
+        LIMIT 20
+      `,
+    )
+    .all<NoticeRow>();
+
+  return result.results.map(toNoticeItem);
+}
+
+export async function getNoticeById(db: D1Database, noticeId: number) {
+  return db
+    .prepare(
+      `
+        SELECT
+          n.id,
+          n.title,
+          n.content,
+          n.created_at,
+          e.name AS author_name,
+          e.role AS author_role
+        FROM notices n
+        INNER JOIN employees e ON e.id = n.author_id
+        WHERE n.id = ?
+      `,
+    )
+    .bind(noticeId)
+    .first<NoticeRow>();
+}
+
+export async function insertNotice(
+  db: D1Database,
+  input: {
+    title: string;
+    content: string;
+    authorId: number;
+  },
+) {
+  const result = await db
+    .prepare(
+      `
+        INSERT INTO notices (title, content, author_id)
+        VALUES (?, ?, ?)
+      `,
+    )
+    .bind(input.title, input.content, input.authorId)
+    .run();
+
+  return Number(result.meta.last_row_id);
+}
+
 export function toLeaveItem(row: LeaveRow): LeaveRequestItem {
   return {
     id: row.id,
@@ -354,6 +407,8 @@ export function toLeaveItem(row: LeaveRow): LeaveRequestItem {
     employeeNo: row.employee_no,
     employeeName: row.employee_name,
     teamName: row.team_name ?? "-",
+    requesterRole: row.requester_role,
+    requesterHasLeader: row.requester_has_leader === 1,
     type: row.type,
     startDate: row.start_date,
     endDate: row.end_date,
@@ -363,5 +418,17 @@ export function toLeaveItem(row: LeaveRow): LeaveRequestItem {
     createdAt: row.created_at,
     leaderName: row.leader_name,
     hrName: row.hr_name,
+    directorName: row.director_name,
+  };
+}
+
+function toNoticeItem(row: NoticeRow): NoticeItem {
+  return {
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    authorName: row.author_name,
+    authorRole: row.author_role,
+    createdAt: row.created_at,
   };
 }

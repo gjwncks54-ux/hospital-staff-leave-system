@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { LeaveRequestInput, LeaveType } from "../types";
+import type { LeaveRequestInput, LeaveType, UserRole } from "../types";
 
 interface RequestModalProps {
   open: boolean;
   submitting: boolean;
   onClose: () => void;
   onSubmit: (payload: LeaveRequestInput) => Promise<void>;
+  userRole: UserRole;
 }
 
 const leaveOptions: Array<{ value: LeaveType; label: string; helper: string }> = [
@@ -29,7 +30,7 @@ function getEstimatedAmount(type: LeaveType, startDate: string, endDate: string)
   return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
 }
 
-export function RequestModal({ open, submitting, onClose, onSubmit }: RequestModalProps) {
+export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: RequestModalProps) {
   const [type, setType] = useState<LeaveType>("ANNUAL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -48,6 +49,7 @@ export function RequestModal({ open, submitting, onClose, onSubmit }: RequestMod
   }, [open]);
 
   const estimatedAmount = useMemo(() => getEstimatedAmount(type, startDate, endDate), [type, startDate, endDate]);
+  const approvalLine = userRole === "LEADER" ? "신청 → 인사 승인 → 원장 승인" : "신청 → 팀장 승인 → 인사 승인";
 
   if (!open) {
     return null;
@@ -141,13 +143,13 @@ export function RequestModal({ open, submitting, onClose, onSubmit }: RequestMod
 
           <div className="rounded-3xl bg-accent/10 px-4 py-3 text-sm text-accent-strong">
             <p className="font-semibold">예상 차감: {estimatedAmount.toFixed(1)}일</p>
-            <p className="mt-1 text-accent-strong/80">승인 단계: 신청 → 팀장 승인 → HR 최종 승인</p>
+            <p className="mt-1 text-accent-strong/80">승인 단계: {approvalLine}</p>
           </div>
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-2xl bg-hero px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-2xl bg-hero px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition hover:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? "신청 중..." : "신청 올리기"}
           </button>

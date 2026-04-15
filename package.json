@@ -12,8 +12,10 @@
     "cf:deploy": "npm run build && wrangler pages deploy dist",
     "db:migrate:local": "wrangler d1 execute DB --local --file=./migrations/0001_init.sql",
     "db:seed:local": "wrangler d1 execute DB --local --file=./migrations/0002_seed.sql",
+    "db:upgrade:local": "wrangler d1 execute DB --local --file=./migrations/0003_workflow_notices.sql",
     "db:migrate:remote": "wrangler d1 execute DB --remote --file=./migrations/0001_init.sql",
-    "db:seed:remote": "wrangler d1 execute DB --remote --file=./migrations/0002_seed.sql"
+    "db:seed:remote": "wrangler d1 execute DB --remote --file=./migrations/0002_seed.sql",
+    "db:upgrade:remote": "wrangler d1 execute DB --remote --file=./migrations/0003_workflow_notices.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260408.1",

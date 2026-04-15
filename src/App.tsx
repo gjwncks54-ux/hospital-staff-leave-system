@@ -1,15 +1,18 @@
 import { useEffect } from "react";
 import { DashboardShell } from "./components/dashboard-shell";
+import { BrandMark } from "./components/brand-mark";
 import { LoginScreen } from "./components/login-screen";
 import { useAuthStore } from "./stores/auth-store";
 
 function SplashScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-backdrop px-6 py-10">
-      <div className="w-full max-w-sm rounded-[2rem] border border-white/60 bg-white/80 p-8 text-center shadow-panel backdrop-blur">
-        <div className="mx-auto mb-5 h-16 w-16 rounded-[1.5rem] bg-hero" />
-        <p className="text-sm font-medium text-slate-500">세션과 휴가 정책을 확인하고 있습니다.</p>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight text-ink">소중한병원 휴가관리</h1>
+      <div className="w-full max-w-md rounded-[2rem] border border-white/70 bg-white/85 p-8 shadow-panel backdrop-blur">
+        <BrandMark compact />
+        <p className="mt-6 text-sm font-medium text-slate-500">세션과 휴가 정책을 확인하고 있습니다.</p>
+        <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-mist">
+          <div className="h-full w-1/2 rounded-full bg-hero" />
+        </div>
       </div>
     </div>
   );

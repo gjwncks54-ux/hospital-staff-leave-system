@@ -30,11 +30,12 @@ CREATE TABLE IF NOT EXISTS leave_requests (
   start_date TEXT NOT NULL,
   end_date TEXT NOT NULL,
   amount REAL NOT NULL CHECK (amount >= 0),
-  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED_LEADER', 'APPROVED_HR', 'REJECTED')),
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED_LEADER', 'APPROVED_HR', 'APPROVED_DIRECTOR', 'REJECTED')),
   reason TEXT NOT NULL,
   approval_note TEXT,
   approved_leader_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
   approved_hr_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+  approved_director_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -48,9 +49,19 @@ CREATE TABLE IF NOT EXISTS leave_request_events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS notices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  author_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_employees_employee_no ON employees(employee_no);
 CREATE INDEX IF NOT EXISTS idx_employees_leader_id ON employees(leader_id);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_emp_id ON leave_requests(emp_id);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_date_window ON leave_requests(start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_leave_request_events_request_id ON leave_request_events(leave_request_id);
+CREATE INDEX IF NOT EXISTS idx_notices_created_at ON notices(created_at DESC);

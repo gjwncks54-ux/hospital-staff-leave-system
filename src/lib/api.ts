@@ -4,6 +4,7 @@ import type {
   LeaveRequestInput,
   LeaveRequestItem,
   LeaveSummary,
+  NoticeItem,
 } from "../types";
 
 class ApiError extends Error {
@@ -59,6 +60,17 @@ export function logout() {
 
 export function restoreSession() {
   return requestJSON<AuthResponse>("/api/auth/session");
+}
+
+export function fetchNotices() {
+  return requestJSON<{ items: NoticeItem[] }>("/api/notices");
+}
+
+export function createNotice(input: { title: string; content: string }) {
+  return requestJSON<{ item: NoticeItem | null }>("/api/notices", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function fetchLeaveBalance(employeeId: number) {

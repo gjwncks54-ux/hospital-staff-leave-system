@@ -1,0 +1,11 @@
+name = "hospital-staff-leave-system"
+compatibility_date = "2026-04-08"
+pages_build_output_dir = "./dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hospital-staff-leave-db"
+database_id = "5f524992-a63f-49a0-ad96-c0b9c09f3441"
+
+[vars]
+SESSION_COOKIE_NAME = "hospital_leave_session"

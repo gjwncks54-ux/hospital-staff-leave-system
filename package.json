@@ -1,0 +1,37 @@
+{
+  "name": "hospital-staff-leave-system",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "cf:dev": "npm run build && wrangler pages dev dist",
+    "cf:deploy": "npm run build && wrangler pages deploy dist",
+    "db:migrate:local": "wrangler d1 execute DB --local --file=./migrations/0001_init.sql",
+    "db:seed:local": "wrangler d1 execute DB --local --file=./migrations/0002_seed.sql",
+    "db:migrate:remote": "wrangler d1 execute DB --remote --file=./migrations/0001_init.sql",
+    "db:seed:remote": "wrangler d1 execute DB --remote --file=./migrations/0002_seed.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260408.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.9",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.7",
+    "wrangler": "^4.81.0"
+  },
+  "dependencies": {
+    "hono": "^4.12.12",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.12"
+  }
+}

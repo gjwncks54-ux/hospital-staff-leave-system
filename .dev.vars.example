@@ -1,0 +1,2 @@
+JWT_SECRET=replace-me-with-a-long-random-secret
+SESSION_COOKIE_NAME=hospital_leave_session

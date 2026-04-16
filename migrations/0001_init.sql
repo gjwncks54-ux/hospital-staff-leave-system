@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS employees (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   joined_at TEXT NOT NULL,
+  retired_at TEXT,
   role TEXT NOT NULL CHECK (role IN ('USER', 'LEADER', 'HR', 'ADMIN', 'DIRECTOR')),
   org_unit_id INTEGER REFERENCES org_units(id) ON DELETE SET NULL,
   leader_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,

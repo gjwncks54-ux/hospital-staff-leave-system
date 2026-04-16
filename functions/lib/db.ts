@@ -1,5 +1,5 @@
 import { getNextPendingStage } from "../../src/lib/approval-flow";
-import type { LeaveRequestItem, NoticeItem, SessionUser } from "../../src/types";
+import type { LeaveRequestItem, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser } from "../../src/types";
 
 export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
 export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK";
@@ -11,10 +11,12 @@ export interface EmployeeRecord {
   name: string;
   email: string;
   joined_at: string;
+  retired_at: string | null;
   role: UserRole;
   password_hash: string;
   leader_id: number | null;
   is_active: number;
+  org_unit_id: number | null;
   team_name: string | null;
   division_name: string | null;
   root_name: string | null;
@@ -48,6 +50,32 @@ interface NoticeRow {
   created_at: string;
   author_name: string;
   author_role: UserRole;
+}
+
+interface ManagedEmployeeRow {
+  id: number;
+  employee_no: string;
+  name: string;
+  email: string;
+  joined_at: string;
+  retired_at: string | null;
+  role: UserRole;
+  is_active: number;
+  org_unit_id: number | null;
+  unit_name: string | null;
+  parent_name: string | null;
+  grand_name: string | null;
+  leader_id: number | null;
+  leader_name: string | null;
+}
+
+interface OrgUnitRow {
+  id: number;
+  name: string;
+  unit_type: "ROOT" | "DIVISION" | "TEAM";
+  parent_id: number | null;
+  parent_name: string | null;
+  grand_name: string | null;
 }
 
 const leaveSelect = `
@@ -98,6 +126,26 @@ export async function getEmployeeByEmployeeNo(db: D1Database, employeeNo: string
     .first<EmployeeRecord>();
 }
 
+export async function getEmployeeByEmail(db: D1Database, email: string) {
+  return db
+    .prepare(
+      `
+        SELECT
+          e.*,
+          team.name AS team_name,
+          division.name AS division_name,
+          root.name AS root_name
+        FROM employees e
+        LEFT JOIN org_units team ON team.id = e.org_unit_id
+        LEFT JOIN org_units division ON division.id = team.parent_id
+        LEFT JOIN org_units root ON root.id = division.parent_id
+        WHERE lower(e.email) = lower(?)
+      `,
+    )
+    .bind(email)
+    .first<EmployeeRecord>();
+}
+
 export async function getEmployeeById(db: D1Database, id: number) {
   return db
     .prepare(
@@ -116,6 +164,23 @@ export async function getEmployeeById(db: D1Database, id: number) {
     )
     .bind(id)
     .first<EmployeeRecord>();
+}
+
+export async function getOrgUnitById(db: D1Database, id: number) {
+  return db
+    .prepare(
+      `
+        SELECT
+          id,
+          name,
+          unit_type,
+          parent_id
+        FROM org_units
+        WHERE id = ?
+      `,
+    )
+    .bind(id)
+    .first<{ id: number; name: string; unit_type: "ROOT" | "DIVISION" | "TEAM"; parent_id: number | null }>();
 }
 
 export function toSessionUser(record: EmployeeRecord): SessionUser {
@@ -167,10 +232,162 @@ export async function listHistoryVisibleToActor(db: D1Database, actor: EmployeeR
   return result.results.map(toLeaveItem);
 }
 
+export async function listEmployeesForManagement(db: D1Database) {
+  const result = await db
+    .prepare(
+      `
+        SELECT
+          e.id,
+          e.employee_no,
+          e.name,
+          e.email,
+          e.joined_at,
+          e.retired_at,
+          e.role,
+          e.is_active,
+          e.org_unit_id,
+          unit.name AS unit_name,
+          parent.name AS parent_name,
+          grand.name AS grand_name,
+          e.leader_id,
+          leader.name AS leader_name
+        FROM employees e
+        LEFT JOIN org_units unit ON unit.id = e.org_unit_id
+        LEFT JOIN org_units parent ON parent.id = unit.parent_id
+        LEFT JOIN org_units grand ON grand.id = parent.parent_id
+        LEFT JOIN employees leader ON leader.id = e.leader_id
+        ORDER BY e.is_active DESC, e.name COLLATE NOCASE ASC
+      `,
+    )
+    .all<ManagedEmployeeRow>();
+
+  return result.results.map(toManagedEmployeeItem);
+}
+
+export async function listOrgUnits(db: D1Database) {
+  const result = await db
+    .prepare(
+      `
+        SELECT
+          unit.id,
+          unit.name,
+          unit.unit_type,
+          unit.parent_id,
+          parent.name AS parent_name,
+          grand.name AS grand_name
+        FROM org_units unit
+        LEFT JOIN org_units parent ON parent.id = unit.parent_id
+        LEFT JOIN org_units grand ON grand.id = parent.parent_id
+        ORDER BY
+          CASE unit.unit_type
+            WHEN 'ROOT' THEN 1
+            WHEN 'DIVISION' THEN 2
+            ELSE 3
+          END,
+          unit.name COLLATE NOCASE ASC
+      `,
+    )
+    .all<OrgUnitRow>();
+
+  return result.results.map(toOrgUnitItem);
+}
+
+export async function updateEmployeeForManagement(
+  db: D1Database,
+  input: {
+    employeeId: number;
+    joinedAt: string;
+    retiredAt: string | null;
+    orgUnitId: number | null;
+    leaderId: number | null;
+    isActive: boolean;
+  },
+) {
+  const result = await db
+    .prepare(
+      `
+        UPDATE employees
+        SET
+          joined_at = ?,
+          retired_at = ?,
+          org_unit_id = ?,
+          leader_id = ?,
+          is_active = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+    )
+    .bind(
+      input.joinedAt,
+      input.retiredAt,
+      input.orgUnitId,
+      input.leaderId,
+      input.isActive ? 1 : 0,
+      input.employeeId,
+    )
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+export async function createEmployeeForManagement(
+  db: D1Database,
+  input: {
+    employeeNo: string;
+    name: string;
+    email: string;
+    passwordHash: string;
+    joinedAt: string;
+    role: UserRole;
+    orgUnitId: number | null;
+    leaderId: number | null;
+    isActive: boolean;
+    retiredAt: string | null;
+  },
+) {
+  const result = await db
+    .prepare(
+      `
+        INSERT INTO employees (
+          employee_no,
+          name,
+          email,
+          password_hash,
+          joined_at,
+          retired_at,
+          role,
+          org_unit_id,
+          leader_id,
+          is_active
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .bind(
+      input.employeeNo,
+      input.name,
+      input.email,
+      input.passwordHash,
+      input.joinedAt,
+      input.retiredAt,
+      input.role,
+      input.orgUnitId,
+      input.leaderId,
+      input.isActive ? 1 : 0,
+    )
+    .run();
+
+  return Number(result.meta.last_row_id);
+}
+
 function canActorApproveRow(actor: EmployeeRecord, row: LeaveRow) {
   const nextStage = getNextPendingStage(row.requester_role, row.requester_has_leader === 1, row.status);
   if (!nextStage) {
     return false;
+  }
+
+  if (actor.role === "ADMIN" || actor.role === "DIRECTOR") {
+    return true;
   }
 
   if (nextStage === "LEADER") {
@@ -178,10 +395,10 @@ function canActorApproveRow(actor: EmployeeRecord, row: LeaveRow) {
   }
 
   if (nextStage === "HR") {
-    return actor.role === "HR" || actor.role === "ADMIN";
+    return actor.role === "HR";
   }
 
-  return actor.role === "DIRECTOR";
+  return false;
 }
 
 export async function listPendingApprovalsForActor(db: D1Database, actor: EmployeeRecord) {
@@ -425,6 +642,39 @@ export async function updateNotice(
   return result.meta.changes > 0;
 }
 
+export async function getManagedEmployeeById(db: D1Database, employeeId: number) {
+  const result = await db
+    .prepare(
+      `
+        SELECT
+          e.id,
+          e.employee_no,
+          e.name,
+          e.email,
+          e.joined_at,
+          e.retired_at,
+          e.role,
+          e.is_active,
+          e.org_unit_id,
+          unit.name AS unit_name,
+          parent.name AS parent_name,
+          grand.name AS grand_name,
+          e.leader_id,
+          leader.name AS leader_name
+        FROM employees e
+        LEFT JOIN org_units unit ON unit.id = e.org_unit_id
+        LEFT JOIN org_units parent ON parent.id = unit.parent_id
+        LEFT JOIN org_units grand ON grand.id = parent.parent_id
+        LEFT JOIN employees leader ON leader.id = e.leader_id
+        WHERE e.id = ?
+      `,
+    )
+    .bind(employeeId)
+    .first<ManagedEmployeeRow>();
+
+  return result ? toManagedEmployeeItem(result) : null;
+}
+
 export async function deleteNotice(db: D1Database, noticeId: number) {
   const result = await db
     .prepare(
@@ -469,5 +719,39 @@ function toNoticeItem(row: NoticeRow): NoticeItem {
     authorName: row.author_name,
     authorRole: row.author_role,
     createdAt: row.created_at,
+  };
+}
+
+function buildOrgPath(names: Array<string | null | undefined>) {
+  return names.filter((value): value is string => Boolean(value));
+}
+
+function toManagedEmployeeItem(row: ManagedEmployeeRow): ManagedEmployeeItem {
+  const orgPath = buildOrgPath([row.grand_name, row.parent_name, row.unit_name]);
+
+  return {
+    id: row.id,
+    employeeNo: row.employee_no,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    joinedAt: row.joined_at,
+    retiredAt: row.retired_at,
+    isActive: row.is_active === 1,
+    orgUnitId: row.org_unit_id,
+    teamName: row.unit_name ?? "미지정",
+    orgPath,
+    leaderId: row.leader_id,
+    leaderName: row.leader_name,
+  };
+}
+
+function toOrgUnitItem(row: OrgUnitRow): OrgUnitItem {
+  return {
+    id: row.id,
+    name: row.name,
+    unitType: row.unit_type,
+    parentId: row.parent_id,
+    path: buildOrgPath([row.grand_name, row.parent_name, row.name]),
   };
 }

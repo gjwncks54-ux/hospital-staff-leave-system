@@ -8,13 +8,14 @@ import {
   isFinalApprovedStatus,
   isInFlightStatus,
 } from "../lib/approval-flow";
+import { ApiError, fetchEmployeeLeaveExport } from "../lib/api";
 import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
 import { useLeaveStore } from "../stores/leave-store";
-import type { ApprovalActionInput, LeaveRequestItem, LeaveType, NoticeItem, UserRole } from "../types";
+import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, UserRole } from "../types";
 
-type TabKey = "home" | "history" | "approvals" | "profile";
+type TabKey = "home" | "history" | "approvals" | "people" | "profile";
 type HistoryFilterKey = "ALL" | "IN_FLIGHT" | "APPROVED" | "REJECTED";
 
 const AUTO_REFRESH_THROTTLE_MS = 3000;
@@ -25,6 +26,7 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "home", label: "홈" },
   { key: "history", label: "내역" },
   { key: "approvals", label: "승인" },
+  { key: "people", label: "직원" },
   { key: "profile", label: "프로필" },
 ];
 
@@ -42,9 +44,11 @@ const typeMap: Record<LeaveType, string> = {
   SICK: "병가",
 };
 
-const roleLabel = (role: UserRole) => ({ USER: "직원", LEADER: "팀장", HR: "인사", ADMIN: "관리자", DIRECTOR: "원장" }[role]);
+const roleLabel = (role: UserRole) => ({ USER: "직원", LEADER: "팀장", HR: "인사", ADMIN: "Admin", DIRECTOR: "원장" }[role]);
 const canApprove = (role: UserRole) => ["LEADER", "HR", "ADMIN", "DIRECTOR"].includes(role);
-const canWriteNotice = (role: UserRole) => role === "HR" || role === "DIRECTOR";
+const canWriteNotice = (role: UserRole) => role === "ADMIN" || role === "DIRECTOR";
+const canManageEmployees = (role: UserRole) => role === "ADMIN" || role === "DIRECTOR";
+const employeeStatusLabel = (item: ManagedEmployeeItem) => (item.isActive ? "재직" : "퇴사");
 const formatNumber = (value: number) => value.toFixed(1);
 const formatDate = (date: string) => new Date(date).toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
 const formatDateTime = (date: string) => new Date(date).toLocaleString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -52,6 +56,22 @@ const formatDateRange = (item: LeaveRequestItem) =>
   item.startDate === item.endDate ? formatDate(item.startDate) : `${formatDate(item.startDate)} - ${formatDate(item.endDate)}`;
 const routeLabel = (role: UserRole, hasLeader: boolean) => (role === "LEADER" ? "팀장 → 인사 → 원장" : hasLeader ? "팀원 → 팀장 → 인사" : "직원 → 인사");
 const routeOf = (item: LeaveRequestItem) => routeLabel(item.requesterRole, item.requesterHasLeader);
+const emptyEmployeeForm: EmployeeCreateInput = {
+  employeeNo: "",
+  name: "",
+  email: "",
+  password: "",
+  joinedAt: new Date().toISOString().slice(0, 10),
+  role: "USER",
+  orgUnitId: null,
+  leaderId: null,
+  isActive: true,
+};
+const employeeRoleOptions: UserRole[] = ["USER", "LEADER", "HR", "ADMIN", "DIRECTOR"];
+
+function formatOrgPath(path: string[]) {
+  return path.length ? path.join(" > ") : "소속 미지정";
+}
 
 function searchText(item: LeaveRequestItem) {
   return [
@@ -104,6 +124,35 @@ function downloadHistoryCsv(rows: LeaveRequestItem[]) {
   const link = document.createElement("a");
   link.href = url;
   link.download = `leave-history-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  window.URL.revokeObjectURL(url);
+}
+
+function downloadEmployeeLeaveCsv(
+  rows: Array<{
+    employeeNo: string;
+    name: string;
+    joinedAt: string;
+    entitlement: number;
+    used: number;
+    remaining: number;
+  }>,
+) {
+  const head = ["사번", "이름", "입사일", "총 발생연차", "사용연차", "잔여연차"];
+  const body = rows.map((item) => [
+    item.employeeNo,
+    item.name,
+    item.joinedAt,
+    item.entitlement.toFixed(1),
+    item.used.toFixed(1),
+    item.remaining.toFixed(1),
+  ]);
+  const csv = [head, ...body].map((row) => row.map((value) => `"${String(value).replace(/"/g, "\"\"")}"`).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `employee-leave-summary-${new Date().toISOString().slice(0, 10)}.csv`;
   link.click();
   window.URL.revokeObjectURL(url);
 }
@@ -215,6 +264,48 @@ const EmptyState = ({ label }: { label: string }) => (
   <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-white/88 px-4 py-8 text-center text-sm text-slate-500">{label}</div>
 );
 
+function employeeSearchText(item: ManagedEmployeeItem) {
+  return [item.name, item.employeeNo, item.email, roleLabel(item.role), item.teamName, item.leaderName ?? "", formatOrgPath(item.orgPath), employeeStatusLabel(item)]
+    .join(" ")
+    .toLowerCase();
+}
+
+function EmployeeRow({
+  item,
+  onEdit,
+}: {
+  item: ManagedEmployeeItem;
+  onEdit: (item: ManagedEmployeeItem) => void;
+}) {
+  return (
+    <article className="rounded-[1.6rem] border border-white/70 bg-white/92 p-4 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full bg-brand-slate/10 px-3 py-1 text-[11px] font-semibold text-brand-slate">{roleLabel(item.role)}</span>
+            <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${item.isActive ? "bg-mint/12 text-mint" : "bg-slate-100 text-slate-500"}`}>
+              {employeeStatusLabel(item)}
+            </span>
+          </div>
+          <h3 className="mt-3 text-base font-semibold text-ink">
+            {item.name} · {item.employeeNo}
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">{formatOrgPath(item.orgPath)}</p>
+          <div className="mt-3 space-y-1.5 text-sm text-slate-500">
+            <p>이메일 · {item.email}</p>
+            <p>입사일 · {item.joinedAt}</p>
+            <p>승인자 · {item.leaderName ?? "미지정"}</p>
+            {!item.isActive && item.retiredAt ? <p>퇴사일 · {item.retiredAt}</p> : null}
+          </div>
+        </div>
+        <button type="button" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600" onClick={() => onEdit(item)}>
+          수정
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function DashboardShell() {
   const user = useAuthStore((state) => state.user)!;
   const logout = useAuthStore((state) => state.logout);
@@ -223,9 +314,12 @@ export function DashboardShell() {
     history,
     approvals,
     notices,
+    employees,
+    orgUnits,
     loading,
     submitting,
     postingNotice,
+    updatingEmployee,
     error,
     refresh,
     submitRequest,
@@ -233,6 +327,8 @@ export function DashboardShell() {
     createNotice,
     updateNotice,
     deleteNotice,
+    createEmployee,
+    updateEmployee,
     clearError,
   } = useLeaveStore();
 
@@ -247,6 +343,12 @@ export function DashboardShell() {
   const [editingNoticeId, setEditingNoticeId] = useState<number | null>(null);
   const [noticeTitle, setNoticeTitle] = useState("");
   const [noticeContent, setNoticeContent] = useState("");
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [employeeStatusFilter, setEmployeeStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ACTIVE");
+  const [employeeEditorOpen, setEmployeeEditorOpen] = useState(false);
+  const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
+  const [employeeForm, setEmployeeForm] = useState<EmployeeCreateInput>(emptyEmployeeForm);
+  const [retiredAtInput, setRetiredAtInput] = useState("");
   const lastRefreshRef = useRef(0);
 
   useEffect(() => {
@@ -290,21 +392,56 @@ export function DashboardShell() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const visibleTabs = useMemo(() => tabs.filter((tab) => (tab.key === "approvals" ? canApprove(user.role) : true)), [user.role]);
+  const visibleTabs = useMemo(
+    () =>
+      tabs.filter((tab) => {
+        if (tab.key === "approvals") return canApprove(user.role);
+        if (tab.key === "people") return canManageEmployees(user.role);
+        return true;
+      }),
+    [user.role],
+  );
   const sortedHistory = useMemo(() => [...history].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [history]);
   const sortedApprovals = useMemo(() => [...approvals].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [approvals]);
   const sortedNotices = useMemo(() => [...notices].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [notices]);
+  const sortedEmployees = useMemo(
+    () =>
+      [...employees].sort((a, b) => {
+        if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+        return a.name.localeCompare(b.name, "ko");
+      }),
+    [employees],
+  );
   const inFlight = useMemo(() => sortedHistory.filter((item) => isInFlightStatus(item.requesterRole, item.requesterHasLeader, item.status)), [sortedHistory]);
+  const showHistoryCard = user.role !== "USER";
   const routeOptions = useMemo(() => ["ALL", ...Array.from(new Set(sortedHistory.map((item) => routeOf(item))))], [sortedHistory]);
+  const assignableOrgUnits = useMemo(() => orgUnits.filter((unit) => unit.unitType !== "DIVISION"), [orgUnits]);
+  const leaderOptions = useMemo(
+    () => sortedEmployees.filter((item) => item.isActive && item.role !== "USER" && item.id !== editingEmployeeId),
+    [editingEmployeeId, sortedEmployees],
+  );
   const filteredHistory = useMemo(
     () => sortedHistory.filter((item) => (!historySearch || searchText(item).includes(historySearch.toLowerCase())) && (routeFilter === "ALL" || routeOf(item) === routeFilter) && matchHistoryFilter(item, historyFilter)),
     [historyFilter, historySearch, routeFilter, sortedHistory],
   );
   const filteredApprovals = useMemo(() => (!approvalSearch ? sortedApprovals : sortedApprovals.filter((item) => searchText(item).includes(approvalSearch.toLowerCase()))), [approvalSearch, sortedApprovals]);
+  const filteredEmployees = useMemo(
+    () =>
+      sortedEmployees.filter((item) => {
+        if (employeeStatusFilter === "ACTIVE" && !item.isActive) return false;
+        if (employeeStatusFilter === "INACTIVE" && item.isActive) return false;
+        if (!employeeSearch) return true;
+        return employeeSearchText(item).includes(employeeSearch.toLowerCase());
+      }),
+    [employeeSearch, employeeStatusFilter, sortedEmployees],
+  );
 
   async function handleApproval(payload: ApprovalActionInput) {
     const ok = await actOnRequest(payload, user.id, user.role);
-    if (ok) setToast(payload.action === "APPROVE" ? "승인 처리되었습니다." : "반려 처리되었습니다.");
+    if (ok) {
+      const approveMessage = user.role === "ADMIN" || user.role === "DIRECTOR" ? "전결 승인되었습니다." : "승인 처리되었습니다.";
+      setToast(payload.action === "APPROVE" ? approveMessage : "반려 처리되었습니다.");
+    }
   }
 
   async function handleNoticeSubmit() {
@@ -348,6 +485,98 @@ export function DashboardShell() {
     setEditingNoticeId(null);
     setNoticeTitle("");
     setNoticeContent("");
+  }
+
+  function resetEmployeeEditor() {
+    setEmployeeEditorOpen(false);
+    setEditingEmployeeId(null);
+    setEmployeeForm(emptyEmployeeForm);
+    setRetiredAtInput("");
+  }
+
+  function openEmployeeCreate() {
+    setEditingEmployeeId(null);
+    setEmployeeForm(emptyEmployeeForm);
+    setRetiredAtInput("");
+    setEmployeeEditorOpen(true);
+  }
+
+  function openEmployeeEdit(item: ManagedEmployeeItem) {
+    setEditingEmployeeId(item.id);
+    setEmployeeForm({
+      employeeNo: item.employeeNo,
+      name: item.name,
+      email: item.email,
+      password: "",
+      joinedAt: item.joinedAt,
+      role: item.role,
+      orgUnitId: item.orgUnitId,
+      leaderId: item.leaderId,
+      isActive: item.isActive,
+    });
+    setRetiredAtInput(item.retiredAt ?? "");
+    setEmployeeEditorOpen(true);
+  }
+
+  async function handleEmployeeSubmit() {
+    if (!employeeForm.name.trim() || !employeeForm.employeeNo.trim() || !employeeForm.email.trim()) return;
+
+    if (editingEmployeeId) {
+      const ok = await updateEmployee(
+        editingEmployeeId,
+        {
+          joinedAt: employeeForm.joinedAt,
+          retiredAt: employeeForm.isActive ? null : retiredAtInput || null,
+          orgUnitId: employeeForm.orgUnitId,
+          leaderId: employeeForm.leaderId,
+          isActive: employeeForm.isActive,
+        },
+        user.id,
+        user.role,
+      );
+
+      if (ok) {
+        resetEmployeeEditor();
+        setToast("직원 정보가 수정되었습니다.");
+      }
+      return;
+    }
+
+    if (!employeeForm.password.trim()) return;
+
+    const ok = await createEmployee(
+      {
+        ...employeeForm,
+        employeeNo: employeeForm.employeeNo.trim(),
+        name: employeeForm.name.trim(),
+        email: employeeForm.email.trim(),
+        password: employeeForm.password.trim(),
+      },
+      user.id,
+      user.role,
+    );
+
+    if (ok) {
+      resetEmployeeEditor();
+      setToast("직원이 등록되었습니다.");
+    }
+  }
+
+  async function handleEmployeeExport() {
+    try {
+      const response = await fetchEmployeeLeaveExport();
+      const visibleEmployeeNos = new Set(filteredEmployees.map((item) => item.employeeNo));
+      const rows = response.items.filter((item) => visibleEmployeeNos.has(item.employeeNo));
+      if (!rows.length) {
+        setToast("다운로드할 직원이 없습니다.");
+        return;
+      }
+      downloadEmployeeLeaveCsv(rows);
+      setToast("직원 연차 CSV를 내려받았습니다.");
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "CSV 다운로드에 실패했습니다.";
+      setToast(message);
+    }
   }
 
   return (
@@ -408,13 +637,22 @@ export function DashboardShell() {
                 <a href={ONE_STEP_URL} target="_blank" rel="noreferrer" className="rounded-[1.4rem] bg-accent px-4 py-4 text-left text-white">
                   <span className="block text-base font-semibold">원스텝 제안</span>
                 </a>
-                <button type="button" className="rounded-[1.4rem] bg-mist px-4 py-4 text-left" onClick={() => setActiveTab("history")}>
-                  <span className="block text-sm text-slate-500">내역</span>
-                  <span className="mt-2 block text-xl font-semibold text-ink">{history.length}건</span>
-                </button>
-                <button type="button" className="rounded-[1.4rem] bg-accent/10 px-4 py-4 text-left" onClick={() => setActiveTab(canApprove(user.role) ? "approvals" : "history")}>
-                  <span className="block text-sm text-slate-500">{canApprove(user.role) ? "승인 대기" : "진행 중"}</span>
-                  <span className="mt-2 block text-xl font-semibold text-accent-strong">{canApprove(user.role) ? filteredApprovals.length : inFlight.length}건</span>
+                {showHistoryCard ? (
+                  <button type="button" className="rounded-[1.4rem] bg-mist px-4 py-4 text-left" onClick={() => setActiveTab("history")}>
+                    <span className="block text-sm text-slate-500">내역</span>
+                    <span className="mt-2 block text-xl font-semibold text-ink">{history.length}건</span>
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className={`${showHistoryCard ? "" : "col-span-2 "}rounded-[1.4rem] bg-accent/10 px-4 py-4 text-left`}
+                  onClick={() => {
+                    setHistoryFilter("IN_FLIGHT");
+                    setActiveTab("history");
+                  }}
+                >
+                  <span className="block text-sm text-slate-500">승인 대기</span>
+                  <span className="mt-2 block text-xl font-semibold text-accent-strong">{inFlight.length}건</span>
                 </button>
               </div>
             </section>
@@ -531,7 +769,7 @@ export function DashboardShell() {
                           반려
                         </button>
                         <button type="button" className="rounded-2xl bg-hero px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60" onClick={() => void handleApproval({ requestId: item.id, action: "APPROVE" })} disabled={submitting}>
-                          승인
+                          {user.role === "ADMIN" || user.role === "DIRECTOR" ? "전결 승인" : "승인"}
                         </button>
                       </div>
                     }
@@ -539,6 +777,177 @@ export function DashboardShell() {
                 ))
               ) : (
                 <EmptyState label="처리할 승인 건이 없습니다." />
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {activeTab === "people" && canManageEmployees(user.role) ? (
+          <section className="mt-4 space-y-4">
+            <article className="rounded-[1.8rem] border border-white/70 bg-white/90 p-4 shadow-card">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold tracking-tight text-ink">직원 관리</h2>
+                  <p className="mt-1 text-sm text-slate-500">입사, 퇴사, 팀 이동을 여기서 관리합니다.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleEmployeeExport()}
+                    disabled={!filteredEmployees.length}
+                  >
+                    CSV 다운로드
+                  </button>
+                  <button type="button" className="rounded-full bg-brand-slate px-4 py-2 text-sm font-semibold text-white" onClick={employeeEditorOpen ? resetEmployeeEditor : openEmployeeCreate}>
+                    {employeeEditorOpen ? "닫기" : "직원 추가"}
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3">
+                <input
+                  value={employeeSearch}
+                  onChange={(event) => setEmployeeSearch(event.target.value)}
+                  placeholder="이름, 사번, 이메일, 소속 검색"
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                />
+                <select
+                  value={employeeStatusFilter}
+                  onChange={(event) => setEmployeeStatusFilter(event.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                >
+                  <option value="ALL">전체 상태</option>
+                  <option value="ACTIVE">재직자</option>
+                  <option value="INACTIVE">퇴사자</option>
+                </select>
+              </div>
+            </article>
+
+            {employeeEditorOpen ? (
+              <article className="rounded-[1.8rem] border border-white/70 bg-white/92 p-4 shadow-card">
+                <div className="grid gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <input
+                      value={employeeForm.name}
+                      onChange={(event) => setEmployeeForm((current) => ({ ...current, name: event.target.value }))}
+                      placeholder="이름"
+                      disabled={Boolean(editingEmployeeId)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition disabled:bg-slate-50 disabled:text-slate-400 focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                    <input
+                      value={employeeForm.employeeNo}
+                      onChange={(event) => setEmployeeForm((current) => ({ ...current, employeeNo: event.target.value }))}
+                      placeholder="사번"
+                      disabled={Boolean(editingEmployeeId)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition disabled:bg-slate-50 disabled:text-slate-400 focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                  </div>
+                  <input
+                    value={employeeForm.email}
+                    onChange={(event) => setEmployeeForm((current) => ({ ...current, email: event.target.value }))}
+                    placeholder="이메일"
+                    disabled={Boolean(editingEmployeeId)}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition disabled:bg-slate-50 disabled:text-slate-400 focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  />
+                  {!editingEmployeeId ? (
+                    <input
+                      value={employeeForm.password}
+                      onChange={(event) => setEmployeeForm((current) => ({ ...current, password: event.target.value }))}
+                      placeholder="초기 비밀번호"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-3">
+                    <select
+                      value={employeeForm.role}
+                      onChange={(event) => setEmployeeForm((current) => ({ ...current, role: event.target.value as UserRole }))}
+                      disabled={Boolean(editingEmployeeId)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition disabled:bg-slate-50 disabled:text-slate-400 focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    >
+                      {employeeRoleOptions.map((role) => (
+                        <option key={role} value={role}>
+                          {roleLabel(role)}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={employeeForm.joinedAt}
+                      onChange={(event) => setEmployeeForm((current) => ({ ...current, joinedAt: event.target.value }))}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                  </div>
+                  <select
+                    value={employeeForm.orgUnitId ?? ""}
+                    onChange={(event) => setEmployeeForm((current) => ({ ...current, orgUnitId: event.target.value ? Number(event.target.value) : null }))}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  >
+                    <option value="">소속 선택</option>
+                    {assignableOrgUnits.map((unit: OrgUnitItem) => (
+                      <option key={unit.id} value={unit.id}>
+                        {formatOrgPath(unit.path)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={employeeForm.leaderId ?? ""}
+                    onChange={(event) => setEmployeeForm((current) => ({ ...current, leaderId: event.target.value ? Number(event.target.value) : null }))}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  >
+                    <option value="">승인자 미지정</option>
+                    {leaderOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.name} · {roleLabel(option.role)}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={employeeForm.isActive ? "ACTIVE" : "INACTIVE"}
+                    onChange={(event) => {
+                      const isActive = event.target.value === "ACTIVE";
+                      setEmployeeForm((current) => ({ ...current, isActive }));
+                      if (isActive) {
+                        setRetiredAtInput("");
+                      } else if (!retiredAtInput) {
+                        setRetiredAtInput(new Date().toISOString().slice(0, 10));
+                      }
+                    }}
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  >
+                    <option value="ACTIVE">재직</option>
+                    <option value="INACTIVE">퇴사/비활성</option>
+                  </select>
+                  {!employeeForm.isActive ? (
+                    <input
+                      type="date"
+                      value={retiredAtInput}
+                      onChange={(event) => setRetiredAtInput(event.target.value)}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                  ) : null}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-600" onClick={resetEmployeeEditor}>
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      disabled={updatingEmployee}
+                      className="rounded-2xl bg-hero px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => void handleEmployeeSubmit()}
+                    >
+                      {updatingEmployee ? "저장 중..." : editingEmployeeId ? "직원 수정" : "직원 등록"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ) : null}
+
+            <div className="text-sm font-semibold text-slate-500">총 {filteredEmployees.length}명</div>
+            <div className="space-y-3">
+              {filteredEmployees.length ? (
+                filteredEmployees.map((item) => <EmployeeRow key={item.id} item={item} onEdit={openEmployeeEdit} />)
+              ) : (
+                <EmptyState label="조건에 맞는 직원이 없습니다." />
               )}
             </div>
           </section>

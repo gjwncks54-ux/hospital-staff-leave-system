@@ -31,6 +31,10 @@ function hexToBytes(hex: string) {
   return new Uint8Array(hex.match(/.{1,2}/g)?.map((pair) => Number.parseInt(pair, 16)) ?? []);
 }
 
+function bytesToHex(bytes: Uint8Array) {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function verifyPassword(password: string, storedHash: string) {
   const [algorithm, part2, part3, part4] = storedHash.split("$");
   if (!algorithm || !part2 || !part3) {
@@ -60,6 +64,23 @@ export async function verifyPassword(password: string, storedHash: string) {
   }
 
   return false;
+}
+
+export async function hashPassword(password: string) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const passwordKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt,
+      iterations: 120000,
+    },
+    passwordKey,
+    256,
+  );
+
+  return `pbkdf2_sha256$120000$${bytesToHex(salt)}$${textToHex(derived)}`;
 }
 
 export function sessionCookieName(env: Env["Bindings"]) {

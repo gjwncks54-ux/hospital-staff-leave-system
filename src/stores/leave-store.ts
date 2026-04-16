@@ -2,21 +2,28 @@ import { create } from "zustand";
 import {
   actOnLeaveRequest,
   ApiError,
+  createEmployeeRecord as createEmployeeRecordApi,
   createLeaveRequest,
   createNotice as createNoticeApi,
   deleteNotice as deleteNoticeApi,
+  fetchEmployeeDirectory,
   fetchLeaveBalance,
   fetchLeaveHistory,
   fetchNotices,
   fetchPendingApprovals,
+  updateEmployeeRecord as updateEmployeeRecordApi,
   updateNotice as updateNoticeApi,
 } from "../lib/api";
 import type {
   ApprovalActionInput,
+  EmployeeCreateInput,
+  EmployeeUpdateInput,
   LeaveRequestInput,
   LeaveRequestItem,
   LeaveSummary,
+  ManagedEmployeeItem,
   NoticeItem,
+  OrgUnitItem,
   UserRole,
 } from "../types";
 
@@ -25,9 +32,12 @@ interface LeaveState {
   history: LeaveRequestItem[];
   approvals: LeaveRequestItem[];
   notices: NoticeItem[];
+  employees: ManagedEmployeeItem[];
+  orgUnits: OrgUnitItem[];
   loading: boolean;
   submitting: boolean;
   postingNotice: boolean;
+  updatingEmployee: boolean;
   error: string | null;
   refresh: (employeeId: number, role: UserRole) => Promise<void>;
   submitRequest: (payload: LeaveRequestInput, employeeId: number, role: UserRole) => Promise<boolean>;
@@ -35,11 +45,17 @@ interface LeaveState {
   createNotice: (payload: { title: string; content: string }, employeeId: number, role: UserRole) => Promise<boolean>;
   updateNotice: (noticeId: number, payload: { title: string; content: string }, employeeId: number, role: UserRole) => Promise<boolean>;
   deleteNotice: (noticeId: number, employeeId: number, role: UserRole) => Promise<boolean>;
+  createEmployee: (payload: EmployeeCreateInput, viewerEmployeeId: number, role: UserRole) => Promise<boolean>;
+  updateEmployee: (employeeId: number, payload: EmployeeUpdateInput, viewerEmployeeId: number, role: UserRole) => Promise<boolean>;
   clearError: () => void;
 }
 
 function canReview(role: UserRole) {
   return role === "LEADER" || role === "HR" || role === "ADMIN" || role === "DIRECTOR";
+}
+
+function canManageEmployees(role: UserRole) {
+  return role === "ADMIN" || role === "DIRECTOR";
 }
 
 async function refreshAfterConflict(error: unknown, employeeId: number, role: UserRole) {
@@ -53,19 +69,23 @@ export const useLeaveStore = create<LeaveState>((set) => ({
   history: [],
   approvals: [],
   notices: [],
+  employees: [],
+  orgUnits: [],
   loading: false,
   submitting: false,
   postingNotice: false,
+  updatingEmployee: false,
   error: null,
   async refresh(employeeId, role) {
     set({ loading: true, error: null });
 
     try {
-      const [summary, history, approvals, notices] = await Promise.all([
+      const [summary, history, approvals, notices, employeeDirectory] = await Promise.all([
         fetchLeaveBalance(employeeId),
         fetchLeaveHistory(),
         canReview(role) ? fetchPendingApprovals() : Promise.resolve({ items: [] }),
         fetchNotices(),
+        canManageEmployees(role) ? fetchEmployeeDirectory() : Promise.resolve({ items: [], orgUnits: [] }),
       ]);
 
       set({
@@ -73,6 +93,8 @@ export const useLeaveStore = create<LeaveState>((set) => ({
         history: history.items,
         approvals: approvals.items,
         notices: notices.items,
+        employees: employeeDirectory.items,
+        orgUnits: employeeDirectory.orgUnits,
         loading: false,
       });
     } catch (error) {
@@ -149,6 +171,34 @@ export const useLeaveStore = create<LeaveState>((set) => ({
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "공지 삭제에 실패했습니다.";
       set({ error: message, postingNotice: false });
+      return false;
+    }
+  },
+  async updateEmployee(employeeId, payload, viewerEmployeeId, role) {
+    set({ updatingEmployee: true, error: null });
+
+    try {
+      await updateEmployeeRecordApi(employeeId, payload);
+      await useLeaveStore.getState().refresh(viewerEmployeeId, role);
+      set({ updatingEmployee: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "직원 정보를 수정하지 못했습니다.";
+      set({ error: message, updatingEmployee: false });
+      return false;
+    }
+  },
+  async createEmployee(payload, viewerEmployeeId, role) {
+    set({ updatingEmployee: true, error: null });
+
+    try {
+      await createEmployeeRecordApi(payload);
+      await useLeaveStore.getState().refresh(viewerEmployeeId, role);
+      set({ updatingEmployee: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "직원 등록에 실패했습니다.";
+      set({ error: message, updatingEmployee: false });
       return false;
     }
   },

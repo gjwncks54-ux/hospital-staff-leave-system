@@ -1,10 +1,15 @@
 import type {
   ApprovalActionInput,
   AuthResponse,
+  EmployeeCreateInput,
+  EmployeeLeaveExportItem,
+  EmployeeUpdateInput,
   LeaveRequestInput,
   LeaveRequestItem,
   LeaveSummary,
+  ManagedEmployeeItem,
   NoticeItem,
+  OrgUnitItem,
 } from "../types";
 
 class ApiError extends Error {
@@ -96,6 +101,28 @@ export function fetchLeaveHistory() {
 
 export function fetchPendingApprovals() {
   return requestJSON<{ items: LeaveRequestItem[] }>("/api/approvals/pending");
+}
+
+export function fetchEmployeeDirectory() {
+  return requestJSON<{ items: ManagedEmployeeItem[]; orgUnits: OrgUnitItem[] }>("/api/admin/employees");
+}
+
+export function updateEmployeeRecord(employeeId: number, input: EmployeeUpdateInput) {
+  return requestJSON<{ item: ManagedEmployeeItem | null }>(`/api/admin/employees/${employeeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createEmployeeRecord(input: EmployeeCreateInput) {
+  return requestJSON<{ item: ManagedEmployeeItem | null }>("/api/admin/employees", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function fetchEmployeeLeaveExport() {
+  return requestJSON<{ items: EmployeeLeaveExportItem[] }>("/api/admin/employees/export");
 }
 
 export function createLeaveRequest(input: LeaveRequestInput) {

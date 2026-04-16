@@ -1,6 +1,7 @@
 export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
 export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK";
 export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED";
+export type OrgUnitType = "ROOT" | "DIVISION" | "TEAM";
 
 export interface SessionUser {
   id: number;
@@ -68,4 +69,57 @@ export interface NoticeItem {
   authorName: string;
   authorRole: UserRole;
   createdAt: string;
+}
+
+export interface OrgUnitItem {
+  id: number;
+  name: string;
+  unitType: OrgUnitType;
+  parentId: number | null;
+  path: string[];
+}
+
+export interface ManagedEmployeeItem {
+  id: number;
+  employeeNo: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  joinedAt: string;
+  retiredAt: string | null;
+  isActive: boolean;
+  orgUnitId: number | null;
+  teamName: string;
+  orgPath: string[];
+  leaderId: number | null;
+  leaderName: string | null;
+}
+
+export interface EmployeeUpdateInput {
+  joinedAt: string;
+  retiredAt: string | null;
+  orgUnitId: number | null;
+  leaderId: number | null;
+  isActive: boolean;
+}
+
+export interface EmployeeCreateInput {
+  employeeNo: string;
+  name: string;
+  email: string;
+  password: string;
+  joinedAt: string;
+  role: UserRole;
+  orgUnitId: number | null;
+  leaderId: number | null;
+  isActive: boolean;
+}
+
+export interface EmployeeLeaveExportItem {
+  employeeNo: string;
+  name: string;
+  joinedAt: string;
+  entitlement: number;
+  used: number;
+  remaining: number;
 }

@@ -5,7 +5,8 @@ import { useAuthStore } from "../stores/auth-store";
 const demoAccounts = [
   { label: "직원", employeeNo: "SH-2024-013", password: "Pilot2026!", helper: "신청 / 내역 조회" },
   { label: "팀장", employeeNo: "SH-2021-004", password: "Pilot2026!", helper: "1차 승인" },
-  { label: "인사", employeeNo: "SH-2020-001", password: "Pilot2026!", helper: "최종 승인" },
+  { label: "인사", employeeNo: "SH-2020-001", password: "Pilot2026!", helper: "순차 승인" },
+  { label: "Admin", employeeNo: "SH-2020-010", password: "Pilot2026!", helper: "직원 관리 / 전결 승인" },
   { label: "원장", employeeNo: "SH-2018-001", password: "Pilot2026!", helper: "최종 승인 조회" },
 ];
 

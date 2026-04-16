@@ -1,0 +1,6 @@
+employee_no,name,email,joined_at,role,org_unit_name,leader_employee_no,is_active
+SH-2018-001,Director Kang,director@example.com,2018-03-01,DIRECTOR,CEO,,1
+SH-2020-001,HR Han,hr@example.com,2020-01-15,HR,HR Team,SH-2018-001,1
+SH-2020-010,Admin Seo,admin@example.com,2020-05-10,ADMIN,Admin Team,SH-2018-001,1
+SH-2021-004,Leader Park,leader@example.com,2021-07-01,LEADER,Admin Team,SH-2018-001,1
+SH-2024-013,User Kim,user@example.com,2024-08-19,USER,Admin Team,SH-2021-004,1

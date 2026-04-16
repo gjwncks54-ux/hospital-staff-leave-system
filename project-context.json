@@ -1,0 +1,251 @@
+{
+  "project": {
+    "name": "Hospital Staff Leave Management System",
+    "displayName": "우리베스트내과의원 휴가관리",
+    "workspaceName": "소중한 병원",
+    "status": "active_prototype",
+    "summary": "Mobile-first leave management web app for hospital staff. Supports leave requests, multi-step approvals, admin staff management, notices, and CSV exports.",
+    "generatedAt": "2026-04-16",
+    "stack": {
+      "frontend": ["React", "Vite", "TypeScript", "Tailwind CSS", "Zustand"],
+      "backend": ["Cloudflare Pages Functions", "Hono", "Cloudflare D1"],
+      "deployment": ["Cloudflare Pages", "Cloudflare D1"]
+    }
+  },
+  "deployment": {
+    "productionUrl": "https://hospital-staff-leave-system.pages.dev",
+    "healthcheckUrl": "https://hospital-staff-leave-system.pages.dev/api/health",
+    "pagesProjectName": "hospital-staff-leave-system",
+    "d1BindingName": "DB",
+    "latestVerifiedBundle": "index-Dey99k7N.js",
+    "notes": [
+      "Production healthcheck was verified on 2026-04-16.",
+      "Recent UI/API changes were deployed after build verification."
+    ]
+  },
+  "auth": {
+    "loginMethod": "employee_no + password",
+    "sessionMode": "JWT cookie",
+    "demoPassword": "Pilot2026!",
+    "demoAccounts": [
+      {
+        "role": "USER",
+        "label": "직원",
+        "employeeNo": "SH-2024-013"
+      },
+      {
+        "role": "LEADER",
+        "label": "팀장",
+        "employeeNo": "SH-2021-004"
+      },
+      {
+        "role": "HR",
+        "label": "인사",
+        "employeeNo": "SH-2020-001"
+      },
+      {
+        "role": "ADMIN",
+        "label": "Admin",
+        "employeeNo": "SH-2020-010"
+      },
+      {
+        "role": "DIRECTOR",
+        "label": "원장",
+        "employeeNo": "SH-2018-001"
+      }
+    ]
+  },
+  "roles": {
+    "USER": {
+      "displayName": "직원",
+      "capabilities": [
+        "own_leave_request",
+        "own_history_view",
+        "own_balance_view"
+      ]
+    },
+    "LEADER": {
+      "displayName": "팀장",
+      "capabilities": [
+        "own_leave_request",
+        "own_team_history_view",
+        "leader_stage_approval_only"
+      ]
+    },
+    "HR": {
+      "displayName": "인사",
+      "capabilities": [
+        "hr_stage_approval_only",
+        "no_super_pass",
+        "no_employee_management",
+        "no_notice_write"
+      ]
+    },
+    "ADMIN": {
+      "displayName": "Admin",
+      "capabilities": [
+        "super_pass_approval",
+        "employee_management",
+        "notice_create_update_delete",
+        "employee_leave_csv_export"
+      ]
+    },
+    "DIRECTOR": {
+      "displayName": "원장",
+      "capabilities": [
+        "super_pass_approval",
+        "director_stage_approval",
+        "employee_management",
+        "notice_create_update_delete"
+      ]
+    }
+  },
+  "approvalRules": {
+    "memberLeaveFlow": ["USER", "LEADER", "HR"],
+    "leaderLeaveFlow": ["LEADER", "HR", "DIRECTOR"],
+    "superPassRoles": ["ADMIN", "DIRECTOR"],
+    "superPassBehavior": "ADMIN and DIRECTOR can approve any in-flight request immediately to the final status for that route.",
+    "notes": [
+      "Normal approval order is preserved for LEADER and HR.",
+      "HR is not a super-pass role."
+    ]
+  },
+  "employeeManagement": {
+    "initialImport": {
+      "mode": "manual_csv_handoff",
+      "templateFile": "employee-import-template.csv",
+      "templateColumns": [
+        "employee_no",
+        "name",
+        "email",
+        "joined_at",
+        "role",
+        "org_unit_name",
+        "leader_employee_no",
+        "is_active"
+      ]
+    },
+    "ongoingOperations": {
+      "managedInApp": true,
+      "allowedRoles": ["ADMIN", "DIRECTOR"],
+      "supportedActions": [
+        "create_employee",
+        "edit_joined_at",
+        "change_org_unit",
+        "change_leader",
+        "deactivate_employee",
+        "set_retired_at"
+      ]
+    },
+    "csvExports": [
+      {
+        "name": "employee_leave_summary",
+        "allowedRoles": ["ADMIN", "DIRECTOR"],
+        "columns": [
+          "employee_no",
+          "name",
+          "joined_at",
+          "entitlement",
+          "used",
+          "remaining"
+        ],
+        "scope": "current filtered employee list from Admin employee tab"
+      }
+    ]
+  },
+  "features": {
+    "implemented": [
+      "login",
+      "leave_balance_calculation",
+      "leave_request_submission",
+      "half_day_support",
+      "history_filter_and_csv_download",
+      "leader_hr_director_approval_flow",
+      "admin_director_super_pass",
+      "notice_board",
+      "employee_management_tab",
+      "employee_leave_summary_csv_export",
+      "one_step_suggestion_link"
+    ],
+    "notableUiRules": [
+      "Employee home hides the history summary card.",
+      "Approval waiting counts are role-scoped.",
+      "Admin/Director can see employee management tab.",
+      "HR does not see employee management or notice editing controls."
+    ]
+  },
+  "dataModel": {
+    "coreTables": [
+      "employees",
+      "org_units",
+      "leave_requests",
+      "leave_request_events",
+      "notices"
+    ],
+    "importantEmployeeFields": [
+      "employee_no",
+      "name",
+      "email",
+      "joined_at",
+      "retired_at",
+      "role",
+      "org_unit_id",
+      "leader_id",
+      "is_active"
+    ],
+    "migrations": [
+      "0001_init.sql",
+      "0002_seed.sql",
+      "0003_workflow_notices.sql",
+      "0004_employee_retirement.sql"
+    ],
+    "remoteD1Notes": [
+      "retired_at migration was applied remotely on 2026-04-16."
+    ]
+  },
+  "keyFiles": {
+    "frontend": [
+      "src/components/dashboard-shell.tsx",
+      "src/components/login-screen.tsx",
+      "src/components/request-modal.tsx",
+      "src/stores/leave-store.ts",
+      "src/stores/auth-store.ts",
+      "src/lib/api.ts",
+      "src/lib/approval-flow.ts",
+      "src/types.ts"
+    ],
+    "backend": [
+      "functions/api/[[route]].ts",
+      "functions/lib/db.ts",
+      "functions/lib/auth.ts",
+      "functions/lib/leave.ts"
+    ],
+    "config": [
+      "wrangler.toml",
+      "tailwind.config.ts",
+      "package.json"
+    ],
+    "handoff": [
+      "README.md",
+      "project-context.json",
+      "employee-import-template.csv"
+    ]
+  },
+  "operationalNotes": {
+    "git": {
+      "defaultBranch": "main",
+      "latestPushedCommit": "f4cd5e7",
+      "latestPushedSummary": "Add admin workflows and employee leave export"
+    },
+    "currentAssumptions": [
+      "There is only one Admin user in real operation.",
+      "Initial employee import is handled via CSV, not in-app bulk upload.",
+      "Ongoing staff changes are handled in-app by Admin."
+    ],
+    "followUpIdeas": [
+      "Optional conflict protection for employee edits using updated_at",
+      "Optional in-app bulk CSV import UI for Admin",
+      "Optional password reset feature for Admin"
+    ]
+  }
+}

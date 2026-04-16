@@ -86,7 +86,7 @@ export function isInFlightStatus(role: UserRole, hasLeader: boolean, status: Lea
 export function getApprovalRouteLabel(role: UserRole, hasLeader: boolean) {
   return getApprovalStages(role, hasLeader)
     .map(getStageLabel)
-    .join(" → ");
+    .join(" · ");
 }
 
 export function getLeaveStatusLabel(role: UserRole, hasLeader: boolean, status: LeaveStatus) {

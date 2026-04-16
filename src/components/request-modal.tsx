@@ -9,11 +9,11 @@ interface RequestModalProps {
   userRole: UserRole;
 }
 
-const leaveOptions: Array<{ value: LeaveType; label: string; helper: string }> = [
-  { value: "ANNUAL", label: "연차 (전일)", helper: "일 단위 차감" },
-  { value: "HALF_AM", label: "반차 (오전)", helper: "0.5일 차감" },
-  { value: "HALF_PM", label: "반차 (오후)", helper: "0.5일 차감" },
-  { value: "SICK", label: "병가", helper: "연차 잔여와 분리해 관리" },
+const leaveOptions: Array<{ value: LeaveType; label: string }> = [
+  { value: "ANNUAL", label: "연차" },
+  { value: "HALF_AM", label: "반차 오전" },
+  { value: "HALF_PM", label: "반차 오후" },
+  { value: "SICK", label: "병가" },
 ];
 
 function getEstimatedAmount(type: LeaveType, startDate: string, endDate: string) {
@@ -30,11 +30,13 @@ function getEstimatedAmount(type: LeaveType, startDate: string, endDate: string)
   return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
 }
 
-export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: RequestModalProps) {
+export function RequestModal({ open, submitting, onClose, onSubmit }: RequestModalProps) {
   const [type, setType] = useState<LeaveType>("ANNUAL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [reason, setReason] = useState("");
+
+  const isHalfDay = type === "HALF_AM" || type === "HALF_PM";
 
   useEffect(() => {
     if (!open) {
@@ -48,8 +50,13 @@ export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: 
     setType("ANNUAL");
   }, [open]);
 
+  useEffect(() => {
+    if (isHalfDay && startDate) {
+      setEndDate(startDate);
+    }
+  }, [isHalfDay, startDate]);
+
   const estimatedAmount = useMemo(() => getEstimatedAmount(type, startDate, endDate), [type, startDate, endDate]);
-  const approvalLine = userRole === "LEADER" ? "신청 → 인사 승인 → 원장 승인" : "신청 → 팀장 승인 → 인사 승인";
 
   if (!open) {
     return null;
@@ -67,18 +74,11 @@ export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: 
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 px-3 pb-0 pt-8 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-t-[2rem] bg-white px-5 pb-7 pt-4 shadow-2xl shadow-slate-950/15">
+      <div className="w-full max-w-md rounded-t-[2rem] bg-white px-5 pb-7 pt-4 shadow-2xl shadow-slate-950/15">
         <div className="mx-auto mb-5 h-1.5 w-12 rounded-full bg-slate-200" />
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight text-ink">휴가 신청서</h2>
-            <p className="mt-1 text-sm text-slate-500">반차는 오전/오후 0.5일 기준으로 처리됩니다.</p>
-          </div>
-          <button
-            type="button"
-            className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-500"
-            onClick={onClose}
-          >
+          <h2 className="text-xl font-semibold tracking-tight text-ink">휴가 신청</h2>
+          <button type="button" className="rounded-2xl bg-slate-100 px-3 py-2 text-sm font-medium text-slate-500" onClick={onClose}>
             닫기
           </button>
         </div>
@@ -87,7 +87,7 @@ export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: 
           <label className="block space-y-2">
             <span className="text-sm font-semibold text-slate-600">휴가 유형</span>
             <select
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
               value={type}
               onChange={(event) => setType(event.target.value as LeaveType)}
             >
@@ -101,11 +101,11 @@ export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: 
 
           <div className="grid grid-cols-2 gap-3">
             <label className="block space-y-2">
-              <span className="text-sm font-semibold text-slate-600">시작일</span>
+              <span className="text-sm font-semibold text-slate-600">{isHalfDay ? "신청일" : "시작일"}</span>
               <input
                 required
                 type="date"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
                 value={startDate}
                 onChange={(event) => {
                   setStartDate(event.target.value);
@@ -121,7 +121,8 @@ export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: 
               <input
                 required
                 type="date"
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                disabled={isHalfDay}
+                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10 disabled:bg-slate-50 disabled:text-slate-400"
                 value={endDate}
                 min={startDate}
                 onChange={(event) => setEndDate(event.target.value)}
@@ -134,24 +135,21 @@ export function RequestModal({ open, submitting, onClose, onSubmit, userRole }: 
             <textarea
               required
               rows={4}
-              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+              className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
               value={reason}
               onChange={(event) => setReason(event.target.value)}
-              placeholder="예: 건강검진, 가족행사, 진료 예약"
+              placeholder="사유 입력"
             />
           </label>
 
-          <div className="rounded-3xl bg-accent/10 px-4 py-3 text-sm text-accent-strong">
-            <p className="font-semibold">예상 차감: {estimatedAmount.toFixed(1)}일</p>
-            <p className="mt-1 text-accent-strong/80">승인 단계: {approvalLine}</p>
-          </div>
+          <div className="rounded-2xl bg-accent/10 px-4 py-3 text-sm font-semibold text-accent-strong">차감 예정 {estimatedAmount.toFixed(1)}일</div>
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-2xl bg-hero px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition hover:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-2xl bg-hero px-4 py-3.5 text-base font-semibold text-white shadow-lg shadow-brand-slate/20 transition hover:translate-y-px disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? "신청 중..." : "신청 올리기"}
+            {submitting ? "신청 중..." : "신청하기"}
           </button>
         </form>
       </div>

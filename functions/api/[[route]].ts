@@ -104,7 +104,7 @@ app.get("/api/notices", authGuard(), async (c) => {
   return c.json({ items });
 });
 
-app.post("/api/notices", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"]), async (c) => {
+app.post("/api/notices", authGuard(["HR", "DIRECTOR"]), async (c) => {
   const actor = c.get("employee");
   const body = noticeSchema.safeParse(await c.req.json().catch(() => null));
   if (!body.success) {

@@ -4,10 +4,12 @@ import {
   ApiError,
   createLeaveRequest,
   createNotice as createNoticeApi,
+  deleteNotice as deleteNoticeApi,
   fetchLeaveBalance,
   fetchLeaveHistory,
   fetchNotices,
   fetchPendingApprovals,
+  updateNotice as updateNoticeApi,
 } from "../lib/api";
 import type {
   ApprovalActionInput,
@@ -31,6 +33,8 @@ interface LeaveState {
   submitRequest: (payload: LeaveRequestInput, employeeId: number, role: UserRole) => Promise<boolean>;
   actOnRequest: (payload: ApprovalActionInput, employeeId: number, role: UserRole) => Promise<boolean>;
   createNotice: (payload: { title: string; content: string }, employeeId: number, role: UserRole) => Promise<boolean>;
+  updateNotice: (noticeId: number, payload: { title: string; content: string }, employeeId: number, role: UserRole) => Promise<boolean>;
+  deleteNotice: (noticeId: number, employeeId: number, role: UserRole) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -116,6 +120,34 @@ export const useLeaveStore = create<LeaveState>((set) => ({
       return true;
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "공지 등록에 실패했습니다.";
+      set({ error: message, postingNotice: false });
+      return false;
+    }
+  },
+  async updateNotice(noticeId, payload, employeeId, role) {
+    set({ postingNotice: true, error: null });
+
+    try {
+      await updateNoticeApi(noticeId, payload);
+      await useLeaveStore.getState().refresh(employeeId, role);
+      set({ postingNotice: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "공지 수정에 실패했습니다.";
+      set({ error: message, postingNotice: false });
+      return false;
+    }
+  },
+  async deleteNotice(noticeId, employeeId, role) {
+    set({ postingNotice: true, error: null });
+
+    try {
+      await deleteNoticeApi(noticeId);
+      await useLeaveStore.getState().refresh(employeeId, role);
+      set({ postingNotice: false });
+      return true;
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "공지 삭제에 실패했습니다.";
       set({ error: message, postingNotice: false });
       return false;
     }

@@ -400,6 +400,45 @@ export async function insertNotice(
   return Number(result.meta.last_row_id);
 }
 
+export async function updateNotice(
+  db: D1Database,
+  input: {
+    noticeId: number;
+    title: string;
+    content: string;
+  },
+) {
+  const result = await db
+    .prepare(
+      `
+        UPDATE notices
+        SET
+          title = ?,
+          content = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+    )
+    .bind(input.title, input.content, input.noticeId)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+export async function deleteNotice(db: D1Database, noticeId: number) {
+  const result = await db
+    .prepare(
+      `
+        DELETE FROM notices
+        WHERE id = ?
+      `,
+    )
+    .bind(noticeId)
+    .run();
+
+  return result.meta.changes > 0;
+}
+
 export function toLeaveItem(row: LeaveRow): LeaveRequestItem {
   return {
     id: row.id,

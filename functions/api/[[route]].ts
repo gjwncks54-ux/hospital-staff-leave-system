@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getNextPendingStage, getStatusAfterStage } from "../../src/lib/approval-flow";
 import { authGuard, clearSession, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
 import {
+  deleteNotice,
   getEmployeeByEmployeeNo,
   getEmployeeById,
   getLeaveRequestRowById,
@@ -14,6 +15,7 @@ import {
   listNotices,
   listPendingApprovalsForActor,
   toLeaveItem,
+  updateNotice,
   updateLeaveRequestStatus,
   type EmployeeRecord,
   type LeaveStatus,
@@ -119,6 +121,45 @@ app.post("/api/notices", authGuard(["HR", "DIRECTOR"]), async (c) => {
 
   const notice = await getNoticeById(c.env.DB, noticeId);
   return c.json({ item: notice ?? null }, 201);
+});
+
+app.patch("/api/notices/:noticeId", authGuard(["HR", "DIRECTOR"]), async (c) => {
+  const noticeId = Number(c.req.param("noticeId"));
+  if (!Number.isInteger(noticeId)) {
+    return c.json({ message: "잘못된 공지 요청입니다." }, 400);
+  }
+
+  const body = noticeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) {
+    return c.json({ message: "공지 제목과 내용을 다시 확인해 주세요." }, 400);
+  }
+
+  const updatedOk = await updateNotice(c.env.DB, {
+    noticeId,
+    title: body.data.title,
+    content: body.data.content,
+  });
+
+  if (!updatedOk) {
+    return c.json({ message: "공지사항을 찾을 수 없습니다." }, 404);
+  }
+
+  const notice = await getNoticeById(c.env.DB, noticeId);
+  return c.json({ item: notice ?? null });
+});
+
+app.delete("/api/notices/:noticeId", authGuard(["HR", "DIRECTOR"]), async (c) => {
+  const noticeId = Number(c.req.param("noticeId"));
+  if (!Number.isInteger(noticeId)) {
+    return c.json({ message: "잘못된 공지 요청입니다." }, 400);
+  }
+
+  const deletedOk = await deleteNotice(c.env.DB, noticeId);
+  if (!deletedOk) {
+    return c.json({ message: "공지사항을 찾을 수 없습니다." }, 404);
+  }
+
+  return c.json({ ok: true });
 });
 
 app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {

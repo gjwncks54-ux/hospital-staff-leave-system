@@ -73,6 +73,19 @@ export function createNotice(input: { title: string; content: string }) {
   });
 }
 
+export function updateNotice(noticeId: number, input: { title: string; content: string }) {
+  return requestJSON<{ item: NoticeItem | null }>(`/api/notices/${noticeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteNotice(noticeId: number) {
+  return requestJSON<{ ok: true }>(`/api/notices/${noticeId}`, {
+    method: "DELETE",
+  });
+}
+
 export function fetchLeaveBalance(employeeId: number) {
   return requestJSON<LeaveSummary>(`/api/leave/balance/${employeeId}`);
 }

@@ -101,6 +101,7 @@ export interface EmployeeUpdateInput {
   orgUnitId: number | null;
   leaderId: number | null;
   isActive: boolean;
+  password?: string;
 }
 
 export interface EmployeeCreateInput {
@@ -122,4 +123,9 @@ export interface EmployeeLeaveExportItem {
   entitlement: number;
   used: number;
   remaining: number;
+}
+
+export interface PasswordChangeInput {
+  currentPassword: string;
+  newPassword: string;
 }

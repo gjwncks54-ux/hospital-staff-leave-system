@@ -67,20 +67,9 @@ export async function verifyPassword(password: string, storedHash: string) {
 }
 
 export async function hashPassword(password: string) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const passwordKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const derived = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      hash: "SHA-256",
-      salt,
-      iterations: 120000,
-    },
-    passwordKey,
-    256,
-  );
-
-  return `pbkdf2_sha256$120000$${bytesToHex(salt)}$${textToHex(derived)}`;
+  const salt = bytesToHex(crypto.getRandomValues(new Uint8Array(16)));
+  const derived = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${password}:${salt}`));
+  return `sha256$${salt}$${textToHex(derived)}`;
 }
 
 export function sessionCookieName(env: Env["Bindings"]) {

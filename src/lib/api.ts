@@ -10,6 +10,7 @@ import type {
   ManagedEmployeeItem,
   NoticeItem,
   OrgUnitItem,
+  PasswordChangeInput,
 } from "../types";
 
 class ApiError extends Error {
@@ -65,6 +66,13 @@ export function logout() {
 
 export function restoreSession() {
   return requestJSON<AuthResponse>("/api/auth/session");
+}
+
+export function changePassword(input: PasswordChangeInput) {
+  return requestJSON<{ ok: true }>("/api/auth/password", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
 }
 
 export function fetchNotices() {

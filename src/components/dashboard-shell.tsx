@@ -95,6 +95,12 @@ function statusClasses(item: LeaveRequestItem) {
   return "bg-accent/10 text-accent-strong";
 }
 
+function statusBadgeLabel(item: LeaveRequestItem) {
+  if (item.status === "REJECTED") return "반려";
+  if (isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status)) return "승인";
+  return getLeaveStatusLabel(item.requesterRole, item.requesterHasLeader, item.status);
+}
+
 function matchHistoryFilter(item: LeaveRequestItem, filter: HistoryFilterKey) {
   if (filter === "ALL") return true;
   if (filter === "REJECTED") return item.status === "REJECTED";
@@ -206,8 +212,8 @@ function RequestCard({
           <p className="mt-1 text-sm text-slate-500">{subheading}</p>
           <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">{item.reason}</p>
         </div>
-        <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-semibold ${statusClasses(item)}`}>
-          {getLeaveStatusLabel(item.requesterRole, item.requesterHasLeader, item.status)}
+        <span className={`shrink-0 rounded-full px-4 py-2 text-[22px] font-bold leading-none ${statusClasses(item)}`}>
+          {statusBadgeLabel(item)}
         </span>
       </div>
       <StageTrack item={item} />
@@ -309,6 +315,10 @@ function EmployeeRow({
 export function DashboardShell() {
   const user = useAuthStore((state) => state.user)!;
   const logout = useAuthStore((state) => state.logout);
+  const changePassword = useAuthStore((state) => state.changePassword);
+  const passwordUpdating = useAuthStore((state) => state.passwordUpdating);
+  const passwordError = useAuthStore((state) => state.passwordError);
+  const clearPasswordError = useAuthStore((state) => state.clearPasswordError);
   const {
     summary,
     history,
@@ -349,6 +359,10 @@ export function DashboardShell() {
   const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
   const [employeeForm, setEmployeeForm] = useState<EmployeeCreateInput>(emptyEmployeeForm);
   const [retiredAtInput, setRetiredAtInput] = useState("");
+  const [passwordEditorOpen, setPasswordEditorOpen] = useState(false);
+  const [currentPasswordInput, setCurrentPasswordInput] = useState("");
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState("");
   const lastRefreshRef = useRef(0);
 
   useEffect(() => {
@@ -494,6 +508,14 @@ export function DashboardShell() {
     setRetiredAtInput("");
   }
 
+  function resetPasswordEditor() {
+    setPasswordEditorOpen(false);
+    setCurrentPasswordInput("");
+    setNewPasswordInput("");
+    setConfirmPasswordInput("");
+    clearPasswordError();
+  }
+
   function openEmployeeCreate() {
     setEditingEmployeeId(null);
     setEmployeeForm(emptyEmployeeForm);
@@ -518,6 +540,24 @@ export function DashboardShell() {
     setEmployeeEditorOpen(true);
   }
 
+  async function handlePasswordChangeSubmit() {
+    if (!currentPasswordInput.trim() || !newPasswordInput.trim() || !confirmPasswordInput.trim()) return;
+    if (newPasswordInput !== confirmPasswordInput) {
+      setToast("새 비밀번호 확인이 일치하지 않습니다.");
+      return;
+    }
+
+    const ok = await changePassword({
+      currentPassword: currentPasswordInput.trim(),
+      newPassword: newPasswordInput.trim(),
+    });
+
+    if (ok) {
+      resetPasswordEditor();
+      setToast("비밀번호가 변경되었습니다.");
+    }
+  }
+
   async function handleEmployeeSubmit() {
     if (!employeeForm.name.trim() || !employeeForm.employeeNo.trim() || !employeeForm.email.trim()) return;
 
@@ -530,6 +570,7 @@ export function DashboardShell() {
           orgUnitId: employeeForm.orgUnitId,
           leaderId: employeeForm.leaderId,
           isActive: employeeForm.isActive,
+          password: employeeForm.password.trim() || undefined,
         },
         user.id,
         user.role,
@@ -592,9 +633,27 @@ export function DashboardShell() {
                 {user.teamName || user.orgPath.at(-1) || "소속 미지정"} · {user.employeeNo}
               </p>
             </div>
-            <button type="button" className="rounded-2xl bg-brand-slate px-3.5 py-2.5 text-sm font-semibold text-white" onClick={() => void logout()}>
-              로그아웃
-            </button>
+            <div className="flex shrink-0 flex-col gap-2">
+              <button type="button" className="rounded-2xl bg-brand-slate px-3.5 py-2.5 text-sm font-semibold text-white" onClick={() => void logout()}>
+                로그아웃
+              </button>
+              {activeTab === "profile" ? (
+                <button
+                  type="button"
+                  className="rounded-2xl bg-white px-3.5 py-2.5 text-sm font-semibold text-brand-slate ring-1 ring-brand-slate/15"
+                  onClick={() => {
+                    if (passwordEditorOpen) {
+                      resetPasswordEditor();
+                    } else {
+                      setPasswordEditorOpen(true);
+                      clearPasswordError();
+                    }
+                  }}
+                >
+                  {passwordEditorOpen ? "닫기" : "비밀번호 변경"}
+                </button>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -849,6 +908,14 @@ export function DashboardShell() {
                     disabled={Boolean(editingEmployeeId)}
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition disabled:bg-slate-50 disabled:text-slate-400 focus:border-accent focus:ring-4 focus:ring-accent/10"
                   />
+                  {editingEmployeeId ? (
+                    <input
+                      value={employeeForm.password}
+                      onChange={(event) => setEmployeeForm((current) => ({ ...current, password: event.target.value }))}
+                      placeholder="새 비밀번호 (변경 시에만 입력)"
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                    />
+                  ) : null}
                   {!editingEmployeeId ? (
                     <input
                       value={employeeForm.password}
@@ -955,6 +1022,57 @@ export function DashboardShell() {
 
         {activeTab === "profile" ? (
           <section className="mt-4 space-y-4">
+            {passwordEditorOpen ? (
+              <article className="rounded-[1.8rem] border border-white/70 bg-white/90 p-5 shadow-card">
+                <h2 className="text-lg font-semibold tracking-tight text-ink">비밀번호 변경</h2>
+                <div className="mt-4 grid gap-3">
+                  <input
+                    type="password"
+                    value={currentPasswordInput}
+                    onChange={(event) => {
+                      clearPasswordError();
+                      setCurrentPasswordInput(event.target.value);
+                    }}
+                    placeholder="현재 비밀번호"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  />
+                  <input
+                    type="password"
+                    value={newPasswordInput}
+                    onChange={(event) => {
+                      clearPasswordError();
+                      setNewPasswordInput(event.target.value);
+                    }}
+                    placeholder="새 비밀번호"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  />
+                  <input
+                    type="password"
+                    value={confirmPasswordInput}
+                    onChange={(event) => {
+                      clearPasswordError();
+                      setConfirmPasswordInput(event.target.value);
+                    }}
+                    placeholder="새 비밀번호 확인"
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  />
+                  {passwordError ? <div className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-600">{passwordError}</div> : null}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-600" onClick={resetPasswordEditor}>
+                      취소
+                    </button>
+                    <button
+                      type="button"
+                      disabled={passwordUpdating}
+                      className="rounded-2xl bg-hero px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => void handlePasswordChangeSubmit()}
+                    >
+                      {passwordUpdating ? "변경 중..." : "비밀번호 저장"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ) : null}
             <article className="rounded-[1.8rem] border border-white/70 bg-white/90 p-5 shadow-card">
               <h2 className="text-lg font-semibold tracking-tight text-ink">내 정보</h2>
               <div className="mt-4 space-y-3 text-sm text-slate-500">

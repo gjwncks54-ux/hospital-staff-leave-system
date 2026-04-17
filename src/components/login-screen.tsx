@@ -2,17 +2,9 @@ import { FormEvent, useState } from "react";
 import { BrandMark } from "./brand-mark";
 import { useAuthStore } from "../stores/auth-store";
 
-const demoAccounts = [
-  { label: "직원", employeeNo: "SH-2024-013", password: "Pilot2026!", helper: "신청 / 내역 조회" },
-  { label: "팀장", employeeNo: "SH-2021-004", password: "Pilot2026!", helper: "1차 승인" },
-  { label: "인사", employeeNo: "SH-2020-001", password: "Pilot2026!", helper: "순차 승인" },
-  { label: "Admin", employeeNo: "SH-2020-010", password: "Pilot2026!", helper: "직원 관리 / 전결 승인" },
-  { label: "원장", employeeNo: "SH-2018-001", password: "Pilot2026!", helper: "최종 승인 조회" },
-];
-
 export function LoginScreen() {
-  const [employeeNo, setEmployeeNo] = useState("SH-2024-013");
-  const [password, setPassword] = useState("Pilot2026!");
+  const [employeeNo, setEmployeeNo] = useState("");
+  const [password, setPassword] = useState("");
   const [justSubmitted, setJustSubmitted] = useState(false);
 
   const login = useAuthStore((state) => state.login);
@@ -46,7 +38,7 @@ export function LoginScreen() {
                   clearError();
                   setEmployeeNo(event.target.value);
                 }}
-                placeholder="예: SH-2024-013"
+                placeholder="예: WB-0000"
                 autoComplete="username"
               />
             </label>
@@ -78,35 +70,6 @@ export function LoginScreen() {
           </form>
         </section>
 
-        <section className="rounded-[1.8rem] border border-white/70 bg-white/90 px-4 py-4 shadow-card">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-ink">테스트 계정</h2>
-            <span className="text-xs text-slate-400">비밀번호 공통: Pilot2026!</span>
-          </div>
-
-          <div className="mt-3 space-y-2.5">
-            {demoAccounts.map((account) => (
-              <button
-                key={account.employeeNo}
-                type="button"
-                className="flex w-full items-center justify-between rounded-2xl border border-slate-100 bg-white px-4 py-3 text-left shadow-card transition hover:border-accent/25 hover:bg-accent/5"
-                onClick={() => {
-                  clearError();
-                  setEmployeeNo(account.employeeNo);
-                  setPassword(account.password);
-                }}
-              >
-                <div>
-                  <p className="text-sm font-semibold text-ink">
-                    {account.label} · {account.employeeNo}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">{account.helper}</p>
-                </div>
-                <span className="rounded-full bg-mist px-2.5 py-1 text-[11px] font-semibold text-brand-slate">불러오기</span>
-              </button>
-            ))}
-          </div>
-        </section>
       </div>
     </div>
   );

@@ -301,6 +301,7 @@ export async function updateEmployeeForManagement(
     orgUnitId: number | null;
     leaderId: number | null;
     isActive: boolean;
+    passwordHash?: string | null;
   },
 ) {
   const result = await db
@@ -312,6 +313,7 @@ export async function updateEmployeeForManagement(
           retired_at = ?,
           org_unit_id = ?,
           leader_id = ?,
+          password_hash = COALESCE(?, password_hash),
           is_active = ?,
           updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -322,9 +324,27 @@ export async function updateEmployeeForManagement(
       input.retiredAt,
       input.orgUnitId,
       input.leaderId,
+      input.passwordHash ?? null,
       input.isActive ? 1 : 0,
       input.employeeId,
     )
+    .run();
+
+  return result.meta.changes > 0;
+}
+
+export async function updateEmployeePasswordHash(db: D1Database, employeeId: number, passwordHash: string) {
+  const result = await db
+    .prepare(
+      `
+        UPDATE employees
+        SET
+          password_hash = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `,
+    )
+    .bind(passwordHash, employeeId)
     .run();
 
   return result.meta.changes > 0;

@@ -22,6 +22,7 @@ import {
   listPendingApprovalsForActor,
   toLeaveItem,
   updateEmployeeForManagement,
+  updateEmployeePasswordHash,
   updateLeaveRequestStatus,
   updateNotice,
   type EmployeeRecord,
@@ -53,6 +54,16 @@ const requestSchema = z.object({
   reason: z.string().trim().min(2).max(500),
 });
 
+const passwordChangeSchema = z
+  .object({
+    currentPassword: z.string().min(8).max(100),
+    newPassword: z.string().min(8).max(100),
+  })
+  .refine((value) => value.currentPassword !== value.newPassword, {
+    message: "새 비밀번호를 현재 비밀번호와 다르게 입력해 주세요.",
+    path: ["newPassword"],
+  });
+
 const approvalSchema = z.object({
   requestId: z.number().int().positive(),
   action: z.enum(["APPROVE", "REJECT"]),
@@ -72,6 +83,7 @@ const employeeUpdateSchema = z.object({
   orgUnitId: z.number().int().positive().nullable(),
   leaderId: z.number().int().positive().nullable(),
   isActive: z.boolean(),
+  password: z.string().trim().min(8).max(100).optional(),
 });
 
 const employeeCreateSchema = z.object({
@@ -127,6 +139,27 @@ app.post("/api/auth/logout", authGuard(), async (c) => {
 
 app.get("/api/auth/session", authGuard(), async (c) => {
   return c.json({ user: serializeEmployee(c.get("employee")) });
+});
+
+app.patch("/api/auth/password", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  const body = passwordChangeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) {
+    return c.json({ message: body.error.issues[0]?.message ?? "비밀번호를 다시 확인해 주세요." }, 400);
+  }
+
+  const currentPasswordOk = await verifyPassword(body.data.currentPassword, actor.password_hash);
+  if (!currentPasswordOk) {
+    return c.json({ message: "현재 비밀번호가 올바르지 않습니다." }, 401);
+  }
+
+  const newPasswordHash = await hashPassword(body.data.newPassword);
+  const updatedOk = await updateEmployeePasswordHash(c.env.DB, actor.id, newPasswordHash);
+  if (!updatedOk) {
+    return c.json({ message: "비밀번호를 변경하지 못했습니다." }, 500);
+  }
+
+  return c.json({ ok: true });
 });
 
 app.get("/api/notices", authGuard(), async (c) => {
@@ -315,6 +348,11 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     }
   }
 
+  let passwordHash: string | null = null;
+  if (body.data.password) {
+    passwordHash = await hashPassword(body.data.password);
+  }
+
   const normalizedRetiredAt = body.data.isActive ? null : body.data.retiredAt ?? new Date().toISOString().slice(0, 10);
   const updatedOk = await updateEmployeeForManagement(c.env.DB, {
     employeeId,
@@ -323,6 +361,7 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     orgUnitId: body.data.orgUnitId,
     leaderId: body.data.leaderId,
     isActive: body.data.isActive,
+    passwordHash,
   });
 
   if (!updatedOk) {

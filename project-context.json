@@ -5,7 +5,7 @@
     "workspaceName": "소중한 병원",
     "status": "active_prototype",
     "summary": "Mobile-first leave management web app for hospital staff. Supports leave requests, multi-step approvals, admin staff management, notices, and CSV exports.",
-    "generatedAt": "2026-04-16",
+    "generatedAt": "2026-04-17",
     "stack": {
       "frontend": ["React", "Vite", "TypeScript", "Tailwind CSS", "Zustand"],
       "backend": ["Cloudflare Pages Functions", "Hono", "Cloudflare D1"],
@@ -20,13 +20,18 @@
     "latestVerifiedBundle": "index-Dey99k7N.js",
     "notes": [
       "Production healthcheck was verified on 2026-04-16.",
-      "Recent UI/API changes were deployed after build verification."
+      "Recent UI/API changes were deployed after build verification.",
+      "Employee master CSV was imported into remote D1 on 2026-04-17.",
+      "Current production HTML points to bundle index-Dey99k7N.js, and a fresh Pages deployment was created at https://d09e14dc.hospital-staff-leave-system.pages.dev."
     ]
   },
   "auth": {
     "loginMethod": "employee_no + password",
     "sessionMode": "JWT cookie",
     "demoPassword": "Pilot2026!",
+    "importedInitialPasswordRule": "employee_no!",
+    "selfServicePasswordChange": true,
+    "adminEmployeePasswordReset": true,
     "demoAccounts": [
       {
         "role": "USER",
@@ -113,6 +118,11 @@
   "employeeManagement": {
     "initialImport": {
       "mode": "manual_csv_handoff",
+      "status": "applied_to_remote_d1",
+      "sourceCsvPath": "C:/Users/Dennis Heo/Desktop/employee-import-template.csv",
+      "importedEmployeeCount": 63,
+      "initialPasswordRule": "employee_no!",
+      "importTool": "scripts/generate-employee-import.mjs",
       "templateFile": "employee-import-template.csv",
       "templateColumns": [
         "employee_no",
@@ -165,7 +175,9 @@
       "notice_board",
       "employee_management_tab",
       "employee_leave_summary_csv_export",
-      "one_step_suggestion_link"
+      "one_step_suggestion_link",
+      "self_password_change",
+      "admin_employee_password_reset"
     ],
     "notableUiRules": [
       "Employee home hides the history summary card.",
@@ -200,7 +212,8 @@
       "0004_employee_retirement.sql"
     ],
     "remoteD1Notes": [
-      "retired_at migration was applied remotely on 2026-04-16."
+      "retired_at migration was applied remotely on 2026-04-16.",
+      "Remote employee master was replaced from the client CSV on 2026-04-17."
     ]
   },
   "keyFiles": {
@@ -228,7 +241,8 @@
     "handoff": [
       "README.md",
       "project-context.json",
-      "employee-import-template.csv"
+      "employee-import-template.csv",
+      "scripts/generate-employee-import.mjs"
     ]
   },
   "operationalNotes": {
@@ -240,7 +254,8 @@
     "currentAssumptions": [
       "There is only one Admin user in real operation.",
       "Initial employee import is handled via CSV, not in-app bulk upload.",
-      "Ongoing staff changes are handled in-app by Admin."
+      "Ongoing staff changes are handled in-app by Admin.",
+      "Imported employee accounts currently use employee_no! as the temporary initial password."
     ],
     "followUpIdeas": [
       "Optional conflict protection for employee edits using updated_at",

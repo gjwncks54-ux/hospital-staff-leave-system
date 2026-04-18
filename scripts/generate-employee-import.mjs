@@ -26,7 +26,53 @@ const expectedHeaders = [
   "org_unit_name",
   "leader_employee_no",
   "is_active",
+  "initial_remaining_days",
 ];
+
+function parseDate(value) {
+  return new Date(`${value}T00:00:00+09:00`);
+}
+
+function fullYearsBetween(start, end) {
+  let years = end.getFullYear() - start.getFullYear();
+  const anniversaryThisYear = new Date(end.getFullYear(), start.getMonth(), start.getDate());
+  if (end < anniversaryThisYear) {
+    years -= 1;
+  }
+  return Math.max(0, years);
+}
+
+function completedMonthsUnderOneYear(joinedAt, asOf) {
+  let months = (asOf.getFullYear() - joinedAt.getFullYear()) * 12 + (asOf.getMonth() - joinedAt.getMonth());
+  if (asOf.getDate() < joinedAt.getDate()) {
+    months -= 1;
+  }
+  return Math.min(Math.max(months, 0), 11);
+}
+
+function calculateBaseEntitlement(joinedAt, asOf = new Date()) {
+  const joined = parseDate(joinedAt);
+  const serviceYears = fullYearsBetween(joined, asOf);
+
+  if (serviceYears < 1) {
+    return completedMonthsUnderOneYear(joined, asOf);
+  }
+
+  return Math.min(15 + Math.floor((serviceYears - 1) / 2), 25);
+}
+
+function parseRemainingDays(value, rowIndex) {
+  if (value === "") {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid initial_remaining_days on row ${rowIndex + 2}: ${value}`);
+  }
+
+  return parsed;
+}
 
 function decodeCsv(buffer) {
   const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
@@ -114,6 +160,8 @@ rows.forEach((row, index) => {
     throw new Error(`Invalid is_active on row ${index + 2}: ${row.is_active}`);
   }
 
+  parseRemainingDays(row.initial_remaining_days, index);
+
   if (row.org_unit_name && !teamIdByName.has(row.org_unit_name)) {
     teamIdByName.set(row.org_unit_name, teamIdByName.size + 10);
   }
@@ -140,6 +188,9 @@ const employeeValues = rows.map((row, index) => {
   const orgUnitId = row.org_unit_name ? teamIdByName.get(row.org_unit_name) : null;
   const leaderId = row.leader_employee_no ? employeeIdByNo.get(row.leader_employee_no) : null;
   const initialPassword = `${row.employee_no}${initialPasswordSuffix}`;
+  const baseEntitlement = calculateBaseEntitlement(row.joined_at);
+  const initialRemainingDays = parseRemainingDays(row.initial_remaining_days, index);
+  const leaveAdjustmentDays = Number((initialRemainingDays - baseEntitlement).toFixed(1));
 
   return [
     employeeId,
@@ -148,6 +199,7 @@ const employeeValues = rows.map((row, index) => {
     sqlString(row.email),
     sqlString(passwordHash(initialPassword)),
     sqlString(row.joined_at),
+    leaveAdjustmentDays,
     "NULL",
     sqlString(row.role),
     orgUnitId ?? "NULL",
@@ -175,6 +227,7 @@ const sql = [
   "  email,",
   "  password_hash,",
   "  joined_at,",
+  "  leave_adjustment_days,",
   "  retired_at,",
   "  role,",
   "  org_unit_id,",

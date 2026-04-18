@@ -60,7 +60,7 @@ export function getApprovedStage(status: LeaveStatus): ApprovalStage | null {
 }
 
 export function getNextPendingStage(role: UserRole, hasLeader: boolean, status: LeaveStatus): ApprovalStage | null {
-  if (status === "REJECTED") {
+  if (status === "REJECTED" || status === "CANCELLED") {
     return null;
   }
 
@@ -76,11 +76,11 @@ export function getNextPendingStage(role: UserRole, hasLeader: boolean, status: 
 }
 
 export function isFinalApprovedStatus(role: UserRole, hasLeader: boolean, status: LeaveStatus) {
-  return status !== "PENDING" && status !== "REJECTED" && getNextPendingStage(role, hasLeader, status) === null;
+  return status !== "PENDING" && status !== "REJECTED" && status !== "CANCELLED" && getNextPendingStage(role, hasLeader, status) === null;
 }
 
 export function isInFlightStatus(role: UserRole, hasLeader: boolean, status: LeaveStatus) {
-  return status !== "REJECTED" && !isFinalApprovedStatus(role, hasLeader, status);
+  return status !== "REJECTED" && status !== "CANCELLED" && !isFinalApprovedStatus(role, hasLeader, status);
 }
 
 export function getApprovalRouteLabel(role: UserRole, hasLeader: boolean) {
@@ -92,6 +92,10 @@ export function getApprovalRouteLabel(role: UserRole, hasLeader: boolean) {
 export function getLeaveStatusLabel(role: UserRole, hasLeader: boolean, status: LeaveStatus) {
   if (status === "REJECTED") {
     return "반려";
+  }
+
+  if (status === "CANCELLED") {
+    return "취소";
   }
 
   if (status === "PENDING") {

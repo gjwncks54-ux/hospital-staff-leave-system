@@ -2,8 +2,8 @@ import { getNextPendingStage } from "../../src/lib/approval-flow";
 import type { LeaveRequestItem, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser } from "../../src/types";
 
 export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
-export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK";
-export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED";
+export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK" | "UNPAID";
+export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED" | "CANCELLED";
 
 export interface EmployeeRecord {
   id: number;
@@ -11,6 +11,7 @@ export interface EmployeeRecord {
   name: string;
   email: string;
   joined_at: string;
+  leave_adjustment_days: number;
   retired_at: string | null;
   role: UserRole;
   password_hash: string;
@@ -38,6 +39,9 @@ export interface LeaveRow {
   reason: string;
   status: LeaveStatus;
   created_at: string;
+  approved_leader_id: number | null;
+  approved_hr_id: number | null;
+  approved_director_id: number | null;
   leader_name: string | null;
   hr_name: string | null;
   director_name: string | null;
@@ -58,6 +62,7 @@ interface ManagedEmployeeRow {
   name: string;
   email: string;
   joined_at: string;
+  leave_adjustment_days: number;
   retired_at: string | null;
   role: UserRole;
   is_active: number;
@@ -95,6 +100,9 @@ const leaveSelect = `
     lr.reason,
     lr.status,
     lr.created_at,
+    lr.approved_leader_id,
+    lr.approved_hr_id,
+    lr.approved_director_id,
     leader.name AS leader_name,
     hr.name AS hr_name,
     director.name AS director_name
@@ -200,7 +208,7 @@ export async function listCycleLeaveRows(db: D1Database, employeeId: number, cyc
   const result = await db
     .prepare(
       `
-        SELECT type, status, amount
+        SELECT type, status, amount, start_date, end_date
         FROM leave_requests
         WHERE emp_id = ?
           AND date(end_date) >= date(?)
@@ -209,7 +217,7 @@ export async function listCycleLeaveRows(db: D1Database, employeeId: number, cyc
       `,
     )
     .bind(employeeId, cycleStart, cycleEnd)
-    .all<{ type: LeaveType; status: LeaveStatus; amount: number }>();
+    .all<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string }>();
 
   return result.results;
 }
@@ -242,6 +250,7 @@ export async function listEmployeesForManagement(db: D1Database) {
           e.name,
           e.email,
           e.joined_at,
+          e.leave_adjustment_days,
           e.retired_at,
           e.role,
           e.is_active,
@@ -298,6 +307,7 @@ export async function updateEmployeeForManagement(
     employeeId: number;
     joinedAt: string;
     retiredAt: string | null;
+    role: UserRole;
     orgUnitId: number | null;
     leaderId: number | null;
     isActive: boolean;
@@ -311,6 +321,7 @@ export async function updateEmployeeForManagement(
         SET
           joined_at = ?,
           retired_at = ?,
+          role = ?,
           org_unit_id = ?,
           leader_id = ?,
           password_hash = COALESCE(?, password_hash),
@@ -322,6 +333,7 @@ export async function updateEmployeeForManagement(
     .bind(
       input.joinedAt,
       input.retiredAt,
+      input.role,
       input.orgUnitId,
       input.leaderId,
       input.passwordHash ?? null,
@@ -331,6 +343,22 @@ export async function updateEmployeeForManagement(
     .run();
 
   return result.meta.changes > 0;
+}
+
+export async function countActiveDirectReports(db: D1Database, employeeId: number) {
+  const result = await db
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM employees
+        WHERE leader_id = ?
+          AND is_active = 1
+      `,
+    )
+    .bind(employeeId)
+    .first<{ count: number }>();
+
+  return Number(result?.count ?? 0);
 }
 
 export async function updateEmployeePasswordHash(db: D1Database, employeeId: number, passwordHash: string) {
@@ -456,7 +484,7 @@ export async function insertLeaveRequest(
   },
 ): Promise<number | null> {
   const insertStatement =
-    input.type === "SICK"
+    input.type === "SICK" || input.type === "UNPAID"
       ? db
           .prepare(
             `
@@ -474,7 +502,7 @@ export async function insertLeaveRequest(
                 (
                   SELECT SUM(
                     CASE
-                      WHEN type != 'SICK' AND status != 'REJECTED' THEN amount
+                      WHEN type NOT IN ('SICK', 'UNPAID') AND status NOT IN ('REJECTED', 'CANCELLED') THEN amount
                       ELSE 0
                     END
                   )
@@ -672,6 +700,7 @@ export async function getManagedEmployeeById(db: D1Database, employeeId: number)
           e.name,
           e.email,
           e.joined_at,
+          e.leave_adjustment_days,
           e.retired_at,
           e.role,
           e.is_active,
@@ -725,6 +754,9 @@ export function toLeaveItem(row: LeaveRow): LeaveRequestItem {
     reason: row.reason,
     status: row.status,
     createdAt: row.created_at,
+    approvedLeaderId: row.approved_leader_id,
+    approvedHrId: row.approved_hr_id,
+    approvedDirectorId: row.approved_director_id,
     leaderName: row.leader_name,
     hrName: row.hr_name,
     directorName: row.director_name,
@@ -756,6 +788,7 @@ function toManagedEmployeeItem(row: ManagedEmployeeRow): ManagedEmployeeItem {
     email: row.email,
     role: row.role,
     joinedAt: row.joined_at,
+    leaveAdjustmentDays: row.leave_adjustment_days ?? 0,
     retiredAt: row.retired_at,
     isActive: row.is_active === 1,
     orgUnitId: row.org_unit_id,

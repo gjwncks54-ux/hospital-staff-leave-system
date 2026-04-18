@@ -41,7 +41,8 @@ const typeMap: Record<LeaveType, string> = {
   ANNUAL: "연차",
   HALF_AM: "반차 오전",
   HALF_PM: "반차 오후",
-  SICK: "병가",
+  SICK: "공가",
+  UNPAID: "무급휴가",
 };
 
 const roleLabel = (role: UserRole) => ({ USER: "직원", LEADER: "팀장", HR: "인사", ADMIN: "Admin", DIRECTOR: "원장" }[role]);
@@ -90,6 +91,7 @@ function searchText(item: LeaveRequestItem) {
 
 function statusClasses(item: LeaveRequestItem) {
   if (item.status === "REJECTED") return "bg-rose-50 text-rose-600";
+  if (item.status === "CANCELLED") return "bg-slate-200 text-slate-700";
   if (isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status)) return "bg-mint/12 text-mint";
   if (item.status === "PENDING") return "bg-amber-50 text-amber-700";
   return "bg-accent/10 text-accent-strong";
@@ -97,15 +99,35 @@ function statusClasses(item: LeaveRequestItem) {
 
 function statusBadgeLabel(item: LeaveRequestItem) {
   if (item.status === "REJECTED") return "반려";
+  if (item.status === "CANCELLED") return "취소";
   if (isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status)) return "승인";
   return getLeaveStatusLabel(item.requesterRole, item.requesterHasLeader, item.status);
 }
 
 function matchHistoryFilter(item: LeaveRequestItem, filter: HistoryFilterKey) {
   if (filter === "ALL") return true;
-  if (filter === "REJECTED") return item.status === "REJECTED";
+  if (filter === "REJECTED") return item.status === "REJECTED" || item.status === "CANCELLED";
   if (filter === "APPROVED") return isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status);
   return isInFlightStatus(item.requesterRole, item.requesterHasLeader, item.status);
+}
+
+function getFinalApproverId(item: LeaveRequestItem) {
+  const approvalStages = getApprovalStages(item.requesterRole, item.requesterHasLeader);
+  const finalStage = approvalStages[approvalStages.length - 1];
+
+  if (finalStage === "LEADER") {
+    return item.approvedLeaderId ?? null;
+  }
+
+  if (finalStage === "HR") {
+    return item.approvedHrId ?? null;
+  }
+
+  return item.approvedDirectorId ?? null;
+}
+
+function canCancelApprovedRequest(item: LeaveRequestItem, actorId: number) {
+  return isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status) && getFinalApproverId(item) === actorId;
 }
 
 function downloadHistoryCsv(rows: LeaveRequestItem[]) {
@@ -454,8 +476,23 @@ export function DashboardShell() {
     const ok = await actOnRequest(payload, user.id, user.role);
     if (ok) {
       const approveMessage = user.role === "ADMIN" || user.role === "DIRECTOR" ? "전결 승인되었습니다." : "승인 처리되었습니다.";
-      setToast(payload.action === "APPROVE" ? approveMessage : "반려 처리되었습니다.");
+      if (payload.action === "APPROVE") {
+        setToast(approveMessage);
+        return;
+      }
+
+      if (payload.action === "CANCEL") {
+        setToast("승인 취소 처리되었습니다.");
+        return;
+      }
+
+      setToast("반려 처리되었습니다.");
     }
+  }
+
+  async function handleCancelApprovedRequest(item: LeaveRequestItem) {
+    if (!window.confirm("이미 승인된 휴가를 취소할까요?")) return;
+    await handleApproval({ requestId: item.id, action: "CANCEL" });
   }
 
   async function handleNoticeSubmit() {
@@ -567,6 +604,7 @@ export function DashboardShell() {
         {
           joinedAt: employeeForm.joinedAt,
           retiredAt: employeeForm.isActive ? null : retiredAtInput || null,
+          role: employeeForm.role,
           orgUnitId: employeeForm.orgUnitId,
           leaderId: employeeForm.leaderId,
           isActive: employeeForm.isActive,
@@ -798,7 +836,25 @@ export function DashboardShell() {
             <div className="space-y-3">
               {filteredHistory.length ? (
                 filteredHistory.map((item) => (
-                  <RequestCard key={item.id} item={item} heading={`${item.employeeName} · ${formatDateRange(item)}`} subheading={`${item.employeeNo} · ${item.teamName} · 신청 ${formatDateTime(item.createdAt)}`} meta={routeOf(item)} />
+                  <RequestCard
+                    key={item.id}
+                    item={item}
+                    heading={`${item.employeeName} · ${formatDateRange(item)}`}
+                    subheading={`${item.employeeNo} · ${item.teamName} · 신청 ${formatDateTime(item.createdAt)}`}
+                    meta={routeOf(item)}
+                    actionSlot={
+                      canCancelApprovedRequest(item, user.id) ? (
+                        <button
+                          type="button"
+                          className="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void handleCancelApprovedRequest(item)}
+                          disabled={submitting}
+                        >
+                          승인 취소
+                        </button>
+                      ) : undefined
+                    }
+                  />
                 ))
               ) : (
                 <EmptyState label="조건에 맞는 신청 내역이 없습니다." />
@@ -910,6 +966,7 @@ export function DashboardShell() {
                   />
                   {editingEmployeeId ? (
                     <input
+                      type="password"
                       value={employeeForm.password}
                       onChange={(event) => setEmployeeForm((current) => ({ ...current, password: event.target.value }))}
                       placeholder="새 비밀번호 (변경 시에만 입력)"
@@ -918,6 +975,7 @@ export function DashboardShell() {
                   ) : null}
                   {!editingEmployeeId ? (
                     <input
+                      type="password"
                       value={employeeForm.password}
                       onChange={(event) => setEmployeeForm((current) => ({ ...current, password: event.target.value }))}
                       placeholder="초기 비밀번호"
@@ -928,7 +986,7 @@ export function DashboardShell() {
                     <select
                       value={employeeForm.role}
                       onChange={(event) => setEmployeeForm((current) => ({ ...current, role: event.target.value as UserRole }))}
-                      disabled={Boolean(editingEmployeeId)}
+                      disabled={editingEmployeeId === user.id}
                       className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition disabled:bg-slate-50 disabled:text-slate-400 focus:border-accent focus:ring-4 focus:ring-accent/10"
                     >
                       {employeeRoleOptions.map((role) => (

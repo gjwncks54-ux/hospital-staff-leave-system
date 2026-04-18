@@ -1,6 +1,6 @@
 export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
-export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK";
-export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED";
+export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK" | "UNPAID";
+export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED" | "CANCELLED";
 export type OrgUnitType = "ROOT" | "DIVISION" | "TEAM";
 
 export interface SessionUser {
@@ -40,6 +40,9 @@ export interface LeaveRequestItem {
   reason: string;
   status: LeaveStatus;
   createdAt: string;
+  approvedLeaderId?: number | null;
+  approvedHrId?: number | null;
+  approvedDirectorId?: number | null;
   leaderName?: string | null;
   hrName?: string | null;
   directorName?: string | null;
@@ -54,7 +57,7 @@ export interface LeaveRequestInput {
 
 export interface ApprovalActionInput {
   requestId: number;
-  action: "APPROVE" | "REJECT";
+  action: "APPROVE" | "REJECT" | "CANCEL";
   note?: string;
 }
 
@@ -86,6 +89,7 @@ export interface ManagedEmployeeItem {
   email: string;
   role: UserRole;
   joinedAt: string;
+  leaveAdjustmentDays: number;
   retiredAt: string | null;
   isActive: boolean;
   orgUnitId: number | null;
@@ -98,6 +102,7 @@ export interface ManagedEmployeeItem {
 export interface EmployeeUpdateInput {
   joinedAt: string;
   retiredAt: string | null;
+  role: UserRole;
   orgUnitId: number | null;
   leaderId: number | null;
   isActive: boolean;

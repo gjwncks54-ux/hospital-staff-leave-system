@@ -33,15 +33,4 @@ CREATE INDEX IF NOT EXISTS idx_leave_requests_emp_id ON leave_requests(emp_id);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_date_window ON leave_requests(start_date, end_date);
 
-CREATE TABLE IF NOT EXISTS notices (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  author_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_notices_created_at ON notices(created_at DESC);
-
 PRAGMA foreign_keys = ON;

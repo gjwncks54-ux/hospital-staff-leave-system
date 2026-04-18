@@ -13,7 +13,8 @@ const leaveOptions: Array<{ value: LeaveType; label: string }> = [
   { value: "ANNUAL", label: "연차" },
   { value: "HALF_AM", label: "반차 오전" },
   { value: "HALF_PM", label: "반차 오후" },
-  { value: "SICK", label: "병가" },
+  { value: "SICK", label: "공가" },
+  { value: "UNPAID", label: "무급휴가" },
 ];
 
 function getEstimatedAmount(type: LeaveType, startDate: string, endDate: string) {
@@ -28,6 +29,10 @@ function getEstimatedAmount(type: LeaveType, startDate: string, endDate: string)
   const start = new Date(startDate);
   const end = new Date(endDate);
   return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+}
+
+function consumesAnnualBalance(type: LeaveType) {
+  return type !== "SICK" && type !== "UNPAID";
 }
 
 export function RequestModal({ open, submitting, onClose, onSubmit }: RequestModalProps) {
@@ -57,6 +62,7 @@ export function RequestModal({ open, submitting, onClose, onSubmit }: RequestMod
   }, [isHalfDay, startDate]);
 
   const estimatedAmount = useMemo(() => getEstimatedAmount(type, startDate, endDate), [type, startDate, endDate]);
+  const amountLabel = consumesAnnualBalance(type) ? "차감 예정" : "신청 일수";
 
   if (!open) {
     return null;
@@ -142,7 +148,7 @@ export function RequestModal({ open, submitting, onClose, onSubmit }: RequestMod
             />
           </label>
 
-          <div className="rounded-2xl bg-accent/10 px-4 py-3 text-sm font-semibold text-accent-strong">차감 예정 {estimatedAmount.toFixed(1)}일</div>
+          <div className="rounded-2xl bg-accent/10 px-4 py-3 text-sm font-semibold text-accent-strong">{amountLabel} {estimatedAmount.toFixed(1)}일</div>
 
           <button
             type="submit"

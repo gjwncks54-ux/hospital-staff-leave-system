@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getApprovalStages, getNextPendingStage, getStatusAfterStage } from "../../src/lib/approval-flow";
 import { authGuard, clearSession, hashPassword, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
 import {
+  countActiveDirectReports,
   createEmployeeForManagement,
   deleteNotice,
   getEmployeeByEmployeeNo,
@@ -48,7 +49,7 @@ const loginSchema = z.object({
 });
 
 const requestSchema = z.object({
-  type: z.enum(["ANNUAL", "HALF_AM", "HALF_PM", "SICK"]),
+  type: z.enum(["ANNUAL", "HALF_AM", "HALF_PM", "SICK", "UNPAID"]),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   reason: z.string().trim().min(2).max(500),
@@ -66,7 +67,7 @@ const passwordChangeSchema = z
 
 const approvalSchema = z.object({
   requestId: z.number().int().positive(),
-  action: z.enum(["APPROVE", "REJECT"]),
+  action: z.enum(["APPROVE", "REJECT", "CANCEL"]),
   note: z.string().trim().max(500).optional(),
 });
 
@@ -80,6 +81,7 @@ const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const employeeUpdateSchema = z.object({
   joinedAt: z.string().regex(datePattern),
   retiredAt: z.union([z.string().regex(datePattern), z.null()]),
+  role: z.enum(["USER", "LEADER", "HR", "ADMIN", "DIRECTOR"]),
   orgUnitId: z.number().int().positive().nullable(),
   leaderId: z.number().int().positive().nullable(),
   isActive: z.boolean(),
@@ -234,7 +236,7 @@ app.get("/api/admin/employees/export", authGuard(["ADMIN", "DIRECTOR"]), async (
     employees.map(async (employee) => {
       const cycle = calculateLeaveCycle(employee.joinedAt);
       const rows = await listCycleLeaveRows(c.env.DB, employee.id, cycle.cycleStart, cycle.cycleEnd);
-      const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows);
+      const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows, employee.leaveAdjustmentDays);
 
       return {
         employeeNo: employee.employeeNo,
@@ -322,6 +324,15 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     return c.json({ message: "본인을 승인자로 지정할 수 없습니다." }, 400);
   }
 
+  const currentEmployee = await getEmployeeById(c.env.DB, employeeId);
+  if (!currentEmployee) {
+    return c.json({ message: "직원 정보를 찾을 수 없습니다." }, 404);
+  }
+
+  if (actor.id === employeeId && body.data.role !== currentEmployee.role) {
+    return c.json({ message: "본인 계정의 직급은 변경할 수 없습니다." }, 400);
+  }
+
   if (!body.data.isActive && actor.id === employeeId) {
     return c.json({ message: "현재 로그인한 계정은 퇴사 처리할 수 없습니다." }, 400);
   }
@@ -348,6 +359,13 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     }
   }
 
+  if (body.data.role === "USER") {
+    const activeDirectReports = await countActiveDirectReports(c.env.DB, employeeId);
+    if (activeDirectReports > 0) {
+      return c.json({ message: "현재 팀원들이 이 직원을 승인자로 사용 중이라 일반 직원으로 내릴 수 없습니다. 먼저 팀원들의 승인자를 다시 지정해 주세요." }, 409);
+    }
+  }
+
   let passwordHash: string | null = null;
   if (body.data.password) {
     passwordHash = await hashPassword(body.data.password);
@@ -358,6 +376,7 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     employeeId,
     joinedAt: body.data.joinedAt,
     retiredAt: normalizedRetiredAt,
+    role: body.data.role,
     orgUnitId: body.data.orgUnitId,
     leaderId: body.data.leaderId,
     isActive: body.data.isActive,
@@ -390,7 +409,7 @@ app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {
 
   const cycle = calculateLeaveCycle(employee.joined_at);
   const rows = await listCycleLeaveRows(c.env.DB, employeeId, cycle.cycleStart, cycle.cycleEnd);
-  return c.json(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows));
+  return c.json(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, employee.leave_adjustment_days ?? 0));
 });
 
 app.get("/api/leave/history", authGuard(), async (c) => {
@@ -422,11 +441,13 @@ app.post("/api/leave/request", authGuard(), async (c) => {
 
   const amount = calculateRequestAmount(body.data.type, body.data.startDate, body.data.endDate);
   let cycle: ReturnType<typeof calculateLeaveCycle> | null = null;
+  let entitlementForRequest: number | undefined;
 
   if (consumesAnnualBalance(body.data.type)) {
     cycle = calculateLeaveCycle(employee.joined_at);
     const rows = await listCycleLeaveRows(c.env.DB, employee.id, cycle.cycleStart, cycle.cycleEnd);
-    const summary = buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows);
+    const summary = buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, employee.leave_adjustment_days ?? 0);
+    entitlementForRequest = summary.entitlement + (employee.leave_adjustment_days ?? 0);
     if (summary.remaining < amount) {
       return c.json({ message: "잔여 연차가 부족합니다." }, 400);
     }
@@ -442,7 +463,7 @@ app.post("/api/leave/request", authGuard(), async (c) => {
     actorId: employee.id,
     cycleStart: cycle?.cycleStart,
     cycleEnd: cycle?.cycleEnd,
-    entitlement: cycle?.entitlement,
+    entitlement: entitlementForRequest,
   });
 
   if (!requestId) {
@@ -487,6 +508,14 @@ function ensureActorMatchesStage(actor: EmployeeRecord, owner: EmployeeRecord, r
   return { ok: true, requestId };
 }
 
+function isFinalApproved(owner: EmployeeRecord, status: LeaveStatus) {
+  return status !== "PENDING" && status !== "REJECTED" && status !== "CANCELLED" && getNextPendingStage(owner.role, owner.leader_id !== null, status) === null;
+}
+
+function getFinalApproverId(row: NonNullable<Awaited<ReturnType<typeof getLeaveRequestRowById>>>) {
+  return row.approved_director_id ?? row.approved_hr_id ?? row.approved_leader_id ?? null;
+}
+
 app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"]), async (c) => {
   const actor = c.get("employee");
   const body = approvalSchema.safeParse(await c.req.json().catch(() => null));
@@ -502,6 +531,33 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
   const requestOwner = await getEmployeeById(c.env.DB, row.emp_id);
   if (!requestOwner) {
     return c.json({ message: "요청자 정보를 찾을 수 없습니다." }, 404);
+  }
+
+  if (body.data.action === "CANCEL") {
+    if (!isFinalApproved(requestOwner, row.status)) {
+      return c.json({ message: "최종 승인된 건만 취소할 수 있습니다." }, 400);
+    }
+
+    const finalApproverId = getFinalApproverId(row);
+    if (finalApproverId !== actor.id) {
+      return c.json({ message: "마지막 결재자만 승인 취소를 할 수 있습니다." }, 403);
+    }
+
+    const cancelledOk = await updateLeaveRequestStatus(c.env.DB, {
+      requestId: body.data.requestId,
+      currentStatus: row.status,
+      status: "CANCELLED",
+      actorId: actor.id,
+      eventAction: "REQUEST_CANCELLED",
+      note: body.data.note ?? "최종 승인 취소",
+    });
+
+    if (!cancelledOk) {
+      return c.json({ message: "다른 사용자가 먼저 처리한 요청입니다. 새로고침 후 다시 확인해 주세요." }, 409);
+    }
+
+    const cancelled = await getLeaveRequestRowById(c.env.DB, body.data.requestId);
+    return c.json({ item: cancelled ? toLeaveItem(cancelled) : null });
   }
 
   const currentStage = getNextPendingStage(requestOwner.role, requestOwner.leader_id !== null, row.status);
@@ -531,6 +587,7 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
       nextStatus = getStatusAfterStage(finalStage);
 
       if (finalStage === "HR") {
+        leaderId = null;
         hrId = actor.id;
         directorId = null;
       } else if (finalStage === "DIRECTOR") {

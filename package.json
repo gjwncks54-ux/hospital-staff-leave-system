@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
@@ -27,6 +28,7 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^6.0.2",
     "vite": "^8.0.7",
+    "vitest": "^4.1.4",
     "wrangler": "^4.81.0"
   },
   "dependencies": {

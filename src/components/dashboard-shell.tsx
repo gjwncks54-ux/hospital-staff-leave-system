@@ -13,7 +13,7 @@ import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
 import { useLeaveStore } from "../stores/leave-store";
-import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, UserRole } from "../types";
+import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser, UserRole } from "../types";
 
 type TabKey = "home" | "history" | "approvals" | "people" | "profile";
 type HistoryFilterKey = "ALL" | "IN_FLIGHT" | "APPROVED" | "REJECTED";
@@ -112,22 +112,18 @@ function matchHistoryFilter(item: LeaveRequestItem, filter: HistoryFilterKey) {
 }
 
 function getFinalApproverId(item: LeaveRequestItem) {
-  const approvalStages = getApprovalStages(item.requesterRole, item.requesterHasLeader);
-  const finalStage = approvalStages[approvalStages.length - 1];
-
-  if (finalStage === "LEADER") {
-    return item.approvedLeaderId ?? null;
-  }
-
-  if (finalStage === "HR") {
-    return item.approvedHrId ?? null;
-  }
-
-  return item.approvedDirectorId ?? null;
+  return item.approvedDirectorId ?? item.approvedHrId ?? item.approvedLeaderId ?? null;
 }
 
-function canCancelApprovedRequest(item: LeaveRequestItem, actorId: number) {
-  return isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status) && getFinalApproverId(item) === actorId;
+function canCancelApprovedRequest(item: LeaveRequestItem, actor: Pick<SessionUser, "id" | "role">) {
+  return (
+    isFinalApprovedStatus(item.requesterRole, item.requesterHasLeader, item.status) &&
+    (actor.role === "ADMIN" || actor.role === "HR" || getFinalApproverId(item) === actor.id)
+  );
+}
+
+function canRequesterCancelPendingRequest(item: LeaveRequestItem, actorId: number) {
+  return item.status === "PENDING" && item.employeeId === actorId;
 }
 
 function downloadHistoryCsv(rows: LeaveRequestItem[]) {
@@ -495,6 +491,14 @@ export function DashboardShell() {
     await handleApproval({ requestId: item.id, action: "CANCEL" });
   }
 
+  async function handleCancelPendingRequest(item: LeaveRequestItem) {
+    if (!window.confirm("결재 전인 휴가 신청을 취소할까요?")) return;
+    const ok = await actOnRequest({ requestId: item.id, action: "CANCEL" }, user.id, user.role);
+    if (ok) {
+      setToast("신청 취소되었습니다.");
+    }
+  }
+
   async function handleNoticeSubmit() {
     if (!noticeTitle.trim() || !noticeContent.trim()) return;
     const ok = editingNoticeId
@@ -843,7 +847,16 @@ export function DashboardShell() {
                     subheading={`${item.employeeNo} · ${item.teamName} · 신청 ${formatDateTime(item.createdAt)}`}
                     meta={routeOf(item)}
                     actionSlot={
-                      canCancelApprovedRequest(item, user.id) ? (
+                      canRequesterCancelPendingRequest(item, user.id) ? (
+                        <button
+                          type="button"
+                          className="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void handleCancelPendingRequest(item)}
+                          disabled={submitting}
+                        >
+                          신청 취소
+                        </button>
+                      ) : canCancelApprovedRequest(item, user) ? (
                         <button
                           type="button"
                           className="w-full rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"

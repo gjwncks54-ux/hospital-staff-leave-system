@@ -3,6 +3,13 @@ import { z } from "zod";
 import { getApprovalStages, getNextPendingStage, getStatusAfterStage } from "../../src/lib/approval-flow";
 import { authGuard, clearSession, hashPassword, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
 import {
+  clearEmployeeLoginFailures,
+  getLoginRateLimitState,
+  LOGIN_RATE_LIMIT,
+  normalizeEmployeeNoForRateLimit,
+  recordFailedLoginAttempt,
+} from "../lib/rate-limit";
+import {
   countActiveDirectReports,
   createEmployeeForManagement,
   deleteNotice,
@@ -100,7 +107,7 @@ const employeeCreateSchema = z.object({
   isActive: z.boolean(),
 });
 
-const app = new Hono<AppEnv>();
+export const app = new Hono<AppEnv>();
 
 app.use("*", async (c, next) => {
   await next();
@@ -109,6 +116,17 @@ app.use("*", async (c, next) => {
 
 app.get("/api/health", (c) => c.json({ ok: true, date: "2026-04-16" }));
 
+function getClientIp(c: any) {
+  const forwardedFor = c.req.header("x-forwarded-for");
+  const clientIp = c.req.header("cf-connecting-ip") ?? forwardedFor?.split(",")[0]?.trim();
+  return clientIp && clientIp.length <= 64 ? clientIp : "unknown";
+}
+
+function tooManyLoginAttempts(c: any) {
+  c.header("Retry-After", String(LOGIN_RATE_LIMIT.retryAfterSeconds));
+  return c.json({ message: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." }, 429);
+}
+
 app.post("/api/auth/login", async (c) => {
   try {
     const body = loginSchema.safeParse(await c.req.json().catch(() => null));
@@ -116,16 +134,38 @@ app.post("/api/auth/login", async (c) => {
       return c.json({ message: "사번과 비밀번호를 다시 확인해 주세요." }, 400);
     }
 
+    const normalizedEmployeeNo = normalizeEmployeeNoForRateLimit(body.data.employeeNo);
+    const clientIp = getClientIp(c);
+    const rateLimit = await getLoginRateLimitState(c.env.DB, clientIp, normalizedEmployeeNo);
+    if (rateLimit.blocked) {
+      return tooManyLoginAttempts(c);
+    }
+
     const employee = await getEmployeeByEmployeeNo(c.env.DB, body.data.employeeNo);
     if (!employee || employee.is_active !== 1) {
+      await recordFailedLoginAttempt(c.env.DB, clientIp, normalizedEmployeeNo);
+      if (
+        rateLimit.ipFailures + 1 >= LOGIN_RATE_LIMIT.ipMaxFailures ||
+        rateLimit.employeeFailures + 1 >= LOGIN_RATE_LIMIT.employeeMaxFailures
+      ) {
+        return tooManyLoginAttempts(c);
+      }
       return c.json({ message: "활성화된 계정을 찾을 수 없습니다." }, 401);
     }
 
     const passwordOk = await verifyPassword(body.data.password, employee.password_hash);
     if (!passwordOk) {
+      await recordFailedLoginAttempt(c.env.DB, clientIp, normalizedEmployeeNo);
+      if (
+        rateLimit.ipFailures + 1 >= LOGIN_RATE_LIMIT.ipMaxFailures ||
+        rateLimit.employeeFailures + 1 >= LOGIN_RATE_LIMIT.employeeMaxFailures
+      ) {
+        return tooManyLoginAttempts(c);
+      }
       return c.json({ message: "비밀번호가 올바르지 않습니다." }, 401);
     }
 
+    await clearEmployeeLoginFailures(c.env.DB, normalizedEmployeeNo);
     await setSession(c.env, c.req.url, employee, c);
     return c.json({ user: serializeEmployee(employee) });
   } catch (error) {
@@ -461,6 +501,9 @@ app.post("/api/leave/request", authGuard(), async (c) => {
     amount,
     reason: body.data.reason,
     actorId: employee.id,
+    requesterRole: employee.role,
+    requesterHasLeader: employee.leader_id !== null ? 1 : 0,
+    requesterLeaderId: employee.leader_id,
     cycleStart: cycle?.cycleStart,
     cycleEnd: cycle?.cycleEnd,
     entitlement: entitlementForRequest,
@@ -474,7 +517,7 @@ app.post("/api/leave/request", authGuard(), async (c) => {
   return c.json({ item: row ? toLeaveItem(row) : null }, 201);
 });
 
-function ensureActorMatchesStage(actor: EmployeeRecord, owner: EmployeeRecord, requestId: number, stage: ReturnType<typeof getNextPendingStage>) {
+function ensureActorMatchesStage(actor: EmployeeRecord, ownerEmpId: number, requesterLeaderId: number | null, requestId: number, stage: ReturnType<typeof getNextPendingStage>) {
   if (!stage) {
     return { ok: false, message: "이미 최종 처리된 요청입니다." };
   }
@@ -488,11 +531,11 @@ function ensureActorMatchesStage(actor: EmployeeRecord, owner: EmployeeRecord, r
       return { ok: false, message: "팀장 승인 단계의 요청입니다." };
     }
 
-    if (owner.id === actor.id) {
+    if (ownerEmpId === actor.id) {
       return { ok: false, message: "본인 신청은 직접 승인할 수 없습니다." };
     }
 
-    if (owner.leader_id !== actor.id) {
+    if (requesterLeaderId !== actor.id) {
       return { ok: false, message: "해당 팀장만 이 요청을 승인할 수 있습니다." };
     }
   }
@@ -508,15 +551,11 @@ function ensureActorMatchesStage(actor: EmployeeRecord, owner: EmployeeRecord, r
   return { ok: true, requestId };
 }
 
-function isFinalApproved(owner: EmployeeRecord, status: LeaveStatus) {
-  return status !== "PENDING" && status !== "REJECTED" && status !== "CANCELLED" && getNextPendingStage(owner.role, owner.leader_id !== null, status) === null;
-}
-
 function getFinalApproverId(row: NonNullable<Awaited<ReturnType<typeof getLeaveRequestRowById>>>) {
   return row.approved_director_id ?? row.approved_hr_id ?? row.approved_leader_id ?? null;
 }
 
-app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"]), async (c) => {
+app.patch("/api/leave/approve", authGuard(), async (c) => {
   const actor = c.get("employee");
   const body = approvalSchema.safeParse(await c.req.json().catch(() => null));
   if (!body.success) {
@@ -528,18 +567,44 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
     return c.json({ message: "휴가 요청을 찾을 수 없습니다." }, 404);
   }
 
-  const requestOwner = await getEmployeeById(c.env.DB, row.emp_id);
-  if (!requestOwner) {
-    return c.json({ message: "요청자 정보를 찾을 수 없습니다." }, 404);
-  }
+  const requesterRole = row.requester_role;
+  const requesterHasLeader = row.requester_has_leader === 1;
 
   if (body.data.action === "CANCEL") {
-    if (!isFinalApproved(requestOwner, row.status)) {
+    if (row.status === "PENDING") {
+      if (row.emp_id !== actor.id) {
+        return c.json({ message: "신청자 본인만 1차 결재 전 요청을 취소할 수 있습니다." }, 403);
+      }
+
+      const requesterCancelledOk = await updateLeaveRequestStatus(c.env.DB, {
+        requestId: body.data.requestId,
+        currentStatus: row.status,
+        status: "CANCELLED",
+        actorId: actor.id,
+        eventAction: "REQUEST_CANCELLED",
+        note: body.data.note ?? "신청자 취소",
+      });
+
+      if (!requesterCancelledOk) {
+        return c.json({ message: "다른 사용자가 먼저 처리한 요청입니다. 새로고침 후 다시 확인해 주세요." }, 409);
+      }
+
+      const requesterCancelled = await getLeaveRequestRowById(c.env.DB, body.data.requestId);
+      return c.json({ item: requesterCancelled ? toLeaveItem(requesterCancelled) : null });
+    }
+
+    const isFinalized =
+      row.status !== "REJECTED" &&
+      row.status !== "CANCELLED" &&
+      getNextPendingStage(requesterRole, requesterHasLeader, row.status) === null;
+
+    if (!isFinalized) {
       return c.json({ message: "최종 승인된 건만 취소할 수 있습니다." }, 400);
     }
 
     const finalApproverId = getFinalApproverId(row);
-    if (finalApproverId !== actor.id) {
+    const canPrivilegedRoleCancel = actor.role === "ADMIN" || actor.role === "HR";
+    if (!canPrivilegedRoleCancel && finalApproverId !== actor.id) {
       return c.json({ message: "마지막 결재자만 승인 취소를 할 수 있습니다." }, 403);
     }
 
@@ -560,8 +625,8 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
     return c.json({ item: cancelled ? toLeaveItem(cancelled) : null });
   }
 
-  const currentStage = getNextPendingStage(requestOwner.role, requestOwner.leader_id !== null, row.status);
-  const stageCheck = ensureActorMatchesStage(actor, requestOwner, body.data.requestId, currentStage);
+  const currentStage = getNextPendingStage(requesterRole, requesterHasLeader, row.status);
+  const stageCheck = ensureActorMatchesStage(actor, row.emp_id, row.requester_leader_id, body.data.requestId, currentStage);
   if (!stageCheck.ok) {
     return c.json({ message: stageCheck.message }, 403);
   }
@@ -582,7 +647,7 @@ app.patch("/api/leave/approve", authGuard(["LEADER", "HR", "ADMIN", "DIRECTOR"])
 
   if (body.data.action === "APPROVE") {
     if (isSuperPassOverride) {
-      const approvalStages = getApprovalStages(requestOwner.role, requestOwner.leader_id !== null);
+      const approvalStages = getApprovalStages(requesterRole, requesterHasLeader);
       const finalStage = approvalStages[approvalStages.length - 1];
       nextStatus = getStatusAfterStage(finalStage);
 

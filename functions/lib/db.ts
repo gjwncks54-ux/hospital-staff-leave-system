@@ -90,9 +90,9 @@ const leaveSelect = `
     e.employee_no,
     e.name AS employee_name,
     team.name AS team_name,
-    e.role AS requester_role,
-    CASE WHEN e.leader_id IS NOT NULL THEN 1 ELSE 0 END AS requester_has_leader,
-    e.leader_id AS requester_leader_id,
+    COALESCE(lr.requester_role, e.role) AS requester_role,
+    COALESCE(lr.requester_has_leader, CASE WHEN e.leader_id IS NOT NULL THEN 1 ELSE 0 END) AS requester_has_leader,
+    COALESCE(lr.requester_leader_id, e.leader_id) AS requester_leader_id,
     lr.type,
     lr.start_date,
     lr.end_date,
@@ -478,6 +478,9 @@ export async function insertLeaveRequest(
     amount: number;
     reason: string;
     actorId: number;
+    requesterRole: UserRole;
+    requesterHasLeader: number;
+    requesterLeaderId: number | null;
     cycleStart?: string;
     cycleEnd?: string;
     entitlement?: number;
@@ -488,16 +491,16 @@ export async function insertLeaveRequest(
       ? db
           .prepare(
             `
-              INSERT INTO leave_requests (emp_id, type, start_date, end_date, amount, status, reason)
-              VALUES (?, ?, ?, ?, ?, 'PENDING', ?)
+              INSERT INTO leave_requests (emp_id, type, start_date, end_date, amount, status, reason, requester_role, requester_has_leader, requester_leader_id)
+              VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)
             `,
           )
-          .bind(input.employeeId, input.type, input.startDate, input.endDate, input.amount, input.reason)
+          .bind(input.employeeId, input.type, input.startDate, input.endDate, input.amount, input.reason, input.requesterRole, input.requesterHasLeader, input.requesterLeaderId)
       : db
           .prepare(
             `
-              INSERT INTO leave_requests (emp_id, type, start_date, end_date, amount, status, reason)
-              SELECT ?, ?, ?, ?, ?, 'PENDING', ?
+              INSERT INTO leave_requests (emp_id, type, start_date, end_date, amount, status, reason, requester_role, requester_has_leader, requester_leader_id)
+              SELECT ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?
               WHERE COALESCE(
                 (
                   SELECT SUM(
@@ -522,6 +525,9 @@ export async function insertLeaveRequest(
             input.endDate,
             input.amount,
             input.reason,
+            input.requesterRole,
+            input.requesterHasLeader,
+            input.requesterLeaderId,
             input.employeeId,
             input.cycleStart ?? null,
             input.cycleEnd ?? null,

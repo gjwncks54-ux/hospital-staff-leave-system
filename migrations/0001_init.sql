@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS notices (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS login_failures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope TEXT NOT NULL CHECK (scope IN ('IP', 'EMPLOYEE_NO')),
+  identifier TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_employees_employee_no ON employees(employee_no);
 CREATE INDEX IF NOT EXISTS idx_employees_leader_id ON employees(leader_id);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_emp_id ON leave_requests(emp_id);
@@ -67,3 +74,4 @@ CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_date_window ON leave_requests(start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_leave_request_events_request_id ON leave_request_events(leave_request_id);
 CREATE INDEX IF NOT EXISTS idx_notices_created_at ON notices(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_login_failures_scope_identifier_created_at ON login_failures(scope, identifier, created_at DESC);

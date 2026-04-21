@@ -10,7 +10,7 @@ const stageStatusMap: Record<ApprovalStage, LeaveStatus> = {
 
 export function getApprovalStages(role: UserRole, hasLeader: boolean) {
   if (role === "LEADER") {
-    return ["HR", "DIRECTOR"] as ApprovalStage[];
+    return ["HR"] as ApprovalStage[];
   }
 
   if (!hasLeader) {
@@ -71,7 +71,12 @@ export function getNextPendingStage(role: UserRole, hasLeader: boolean, status: 
     return stages[0] ?? null;
   }
 
-  const nextIndex = stages.indexOf(approvedStage) + 1;
+  const approvedIndex = stages.indexOf(approvedStage);
+  if (approvedIndex === -1) {
+    return null;
+  }
+
+  const nextIndex = approvedIndex + 1;
   return stages[nextIndex] ?? null;
 }
 

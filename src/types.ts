@@ -105,6 +105,8 @@ export interface EmployeeUpdateInput {
   role: UserRole;
   orgUnitId: number | null;
   leaderId: number | null;
+  leaveAdjustmentDays: number;
+  adjustmentReason?: string;
   isActive: boolean;
   password?: string;
 }

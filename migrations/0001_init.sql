@@ -51,6 +51,17 @@ CREATE TABLE IF NOT EXISTS leave_request_events (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS employee_leave_adjustments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  actor_id INTEGER REFERENCES employees(id) ON DELETE SET NULL,
+  previous_adjustment_days REAL NOT NULL,
+  new_adjustment_days REAL NOT NULL,
+  delta_days REAL NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS notices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
@@ -73,5 +84,6 @@ CREATE INDEX IF NOT EXISTS idx_leave_requests_emp_id ON leave_requests(emp_id);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_status ON leave_requests(status);
 CREATE INDEX IF NOT EXISTS idx_leave_requests_date_window ON leave_requests(start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_leave_request_events_request_id ON leave_request_events(leave_request_id);
+CREATE INDEX IF NOT EXISTS idx_employee_leave_adjustments_employee_created_at ON employee_leave_adjustments(employee_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notices_created_at ON notices(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_login_failures_scope_identifier_created_at ON login_failures(scope, identifier, created_at DESC);

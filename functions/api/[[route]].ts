@@ -20,6 +20,7 @@ import {
   getOrgUnitById,
   getLeaveRequestRowById,
   getNoticeById,
+  insertEmployeeLeaveAdjustmentLog,
   insertLeaveRequest,
   insertNotice,
   listCycleLeaveRows,
@@ -84,6 +85,7 @@ const noticeSchema = z.object({
 });
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const isHalfDayStep = (value: number) => Number.isFinite(value) && Math.abs(value * 2 - Math.round(value * 2)) < 1e-9;
 
 const employeeUpdateSchema = z.object({
   joinedAt: z.string().regex(datePattern),
@@ -91,6 +93,10 @@ const employeeUpdateSchema = z.object({
   role: z.enum(["USER", "LEADER", "HR", "ADMIN", "DIRECTOR"]),
   orgUnitId: z.number().int().positive().nullable(),
   leaderId: z.number().int().positive().nullable(),
+  leaveAdjustmentDays: z.number().finite().refine(isHalfDayStep, {
+    message: "연차 조정값은 0.5일 단위로 입력해 주세요.",
+  }),
+  adjustmentReason: z.string().trim().min(2).max(200).optional(),
   isActive: z.boolean(),
   password: z.string().trim().min(8).max(100).optional(),
 });
@@ -406,6 +412,11 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     }
   }
 
+  const adjustmentChanged = (currentEmployee.leave_adjustment_days ?? 0) !== body.data.leaveAdjustmentDays;
+  if (adjustmentChanged && !body.data.adjustmentReason?.trim()) {
+    return c.json({ message: "연차 조정값을 변경할 때는 사유를 함께 입력해 주세요." }, 400);
+  }
+
   let passwordHash: string | null = null;
   if (body.data.password) {
     passwordHash = await hashPassword(body.data.password);
@@ -419,6 +430,7 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     role: body.data.role,
     orgUnitId: body.data.orgUnitId,
     leaderId: body.data.leaderId,
+    leaveAdjustmentDays: body.data.leaveAdjustmentDays,
     isActive: body.data.isActive,
     passwordHash,
   });

@@ -68,6 +68,9 @@ function sqlString(value) {
 }
 
 function parseRemainingDays(value, rowIndex) {
+  if (!String(value ?? "").trim()) {
+    return null;
+  }
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new Error(`Invalid initial_remaining_days on row ${rowIndex + 2}: ${value}`);
@@ -121,6 +124,9 @@ const updates = rows
     }
 
     const targetRemaining = parseRemainingDays(row.initial_remaining_days, index);
+    if (targetRemaining === null) {
+      return null;
+    }
     const diff = Number((targetRemaining - Number(current.remaining)).toFixed(1));
     if (Math.abs(diff) < 0.05) {
       return null;

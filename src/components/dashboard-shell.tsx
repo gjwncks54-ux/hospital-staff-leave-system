@@ -17,9 +17,15 @@ import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveT
 
 type TabKey = "home" | "history" | "approvals" | "people" | "profile";
 type HistoryFilterKey = "ALL" | "IN_FLIGHT" | "APPROVED" | "REJECTED";
+type HistoryPeriodKey = "3M" | "12M" | "ALL";
+type EmployeeFormState = EmployeeCreateInput & {
+  leaveAdjustmentDays: string;
+  adjustmentReason: string;
+};
 
 const AUTO_REFRESH_THROTTLE_MS = 3000;
 const APPROVAL_POLL_MS = 60000;
+const HISTORY_PAGE_SIZE = 10;
 const ONE_STEP_URL = "https://docs.google.com/forms/d/1qPrhTSkEeb57nMpXtLtzGkOjSo68mom49RPvyb_g5AM/edit";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
@@ -37,6 +43,12 @@ const historyFilters: Array<{ key: HistoryFilterKey; label: string }> = [
   { key: "REJECTED", label: "반려" },
 ];
 
+const historyPeriods: Array<{ key: HistoryPeriodKey; label: string }> = [
+  { key: "3M", label: "최근 3개월" },
+  { key: "12M", label: "최근 1년" },
+  { key: "ALL", label: "전체" },
+];
+
 const typeMap: Record<LeaveType, string> = {
   ANNUAL: "연차",
   HALF_AM: "반차 오전",
@@ -52,12 +64,59 @@ const canManageEmployees = (role: UserRole) => role === "ADMIN" || role === "DIR
 const employeeStatusLabel = (item: ManagedEmployeeItem) => (item.isActive ? "재직" : "퇴사");
 const formatNumber = (value: number) => value.toFixed(1);
 const formatDate = (date: string) => new Date(date).toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
-const formatDateTime = (date: string) => new Date(date).toLocaleString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function parseDbDateTime(date: string) {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date)) {
+    return new Date(`${date.replace(" ", "T")}Z`);
+  }
+
+  return new Date(date);
+}
+const formatDateTime = (date: string) => parseDbDateTime(date).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 const formatDateRange = (item: LeaveRequestItem) =>
   item.startDate === item.endDate ? formatDate(item.startDate) : `${formatDate(item.startDate)} - ${formatDate(item.endDate)}`;
 const routeLabel = (role: UserRole, hasLeader: boolean) => (role === "LEADER" ? "팀장 → 인사 → 원장" : hasLeader ? "팀원 → 팀장 → 인사" : "직원 → 인사");
 const routeOf = (item: LeaveRequestItem) => routeLabel(item.requesterRole, item.requesterHasLeader);
-const emptyEmployeeForm: EmployeeCreateInput = {
+function matchHistoryPeriod(item: LeaveRequestItem, period: HistoryPeriodKey) {
+  if (period === "ALL") return true;
+  const threshold = new Date();
+  threshold.setHours(0, 0, 0, 0);
+  threshold.setMonth(threshold.getMonth() - (period === "3M" ? 3 : 12));
+  return new Date(item.startDate) >= threshold;
+}
+
+function parseAdjustmentInput(value: string) {
+  if (!value.trim()) return 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function formatAdjustmentLabel(value: number) {
+  if (value === 0) return "조정 없음";
+  return `${value > 0 ? "+" : ""}${formatNumber(value)}일`;
+}
+
+function getNextEmployeeNoSuggestion(items: ManagedEmployeeItem[]) {
+  let bestPrefix = "WB";
+  let bestNumber = 0;
+  let bestWidth = 4;
+
+  for (const item of items) {
+    const match = item.employeeNo.match(/^([A-Za-z]+)-(\d+)$/);
+    if (!match) continue;
+    const [, prefix, numberPart] = match;
+    const numericValue = Number(numberPart);
+    if (!Number.isFinite(numericValue)) continue;
+    if (numericValue >= bestNumber) {
+      bestPrefix = prefix;
+      bestNumber = numericValue;
+      bestWidth = Math.max(bestWidth, numberPart.length);
+    }
+  }
+
+  return `${bestPrefix}-${String(bestNumber + 1).padStart(bestWidth, "0")}`;
+}
+
+const emptyEmployeeForm: EmployeeFormState = {
   employeeNo: "",
   name: "",
   email: "",
@@ -67,6 +126,8 @@ const emptyEmployeeForm: EmployeeCreateInput = {
   orgUnitId: null,
   leaderId: null,
   isActive: true,
+  leaveAdjustmentDays: "0",
+  adjustmentReason: "",
 };
 const employeeRoleOptions: UserRole[] = ["USER", "LEADER", "HR", "ADMIN", "DIRECTOR"];
 
@@ -129,7 +190,7 @@ function canRequesterCancelPendingRequest(item: LeaveRequestItem, actorId: numbe
 function downloadHistoryCsv(rows: LeaveRequestItem[]) {
   const head = ["신청일시", "이름", "사번", "권한", "소속", "휴가유형", "시작일", "종료일", "차감일수", "전결", "상태", "사유"];
   const body = rows.map((item) => [
-    item.createdAt,
+    formatDateTime(item.createdAt),
     item.employeeName,
     item.employeeNo,
     roleLabel(item.requesterRole),
@@ -365,6 +426,8 @@ export function DashboardShell() {
   const [toast, setToast] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState("");
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>("ALL");
+  const [historyPeriod, setHistoryPeriod] = useState<HistoryPeriodKey>("12M");
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [routeFilter, setRouteFilter] = useState("ALL");
   const [approvalSearch, setApprovalSearch] = useState("");
   const [noticeOpen, setNoticeOpen] = useState(false);
@@ -375,7 +438,24 @@ export function DashboardShell() {
   const [employeeStatusFilter, setEmployeeStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ACTIVE");
   const [employeeEditorOpen, setEmployeeEditorOpen] = useState(false);
   const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
-  const [employeeForm, setEmployeeForm] = useState<EmployeeCreateInput>(emptyEmployeeForm);
+  const [employeeForm, setEmployeeForm] = useState<EmployeeFormState>(emptyEmployeeForm);
+  const [employeeOriginalAdjustment, setEmployeeOriginalAdjustment] = useState(0);
+
+  function openHistoryTab() {
+    setHistorySearch("");
+    setHistoryFilter("ALL");
+    setHistoryPeriod("12M");
+    setRouteFilter("ALL");
+    setActiveTab("history");
+  }
+
+  function openPendingHistoryTab() {
+    setHistorySearch("");
+    setHistoryFilter("IN_FLIGHT");
+    setHistoryPeriod("12M");
+    setRouteFilter("ALL");
+    setActiveTab("history");
+  }
   const [retiredAtInput, setRetiredAtInput] = useState("");
   const [passwordEditorOpen, setPasswordEditorOpen] = useState(false);
   const [currentPasswordInput, setCurrentPasswordInput] = useState("");
@@ -424,6 +504,10 @@ export function DashboardShell() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    setHistoryVisibleCount(HISTORY_PAGE_SIZE);
+  }, [historyFilter, historyPeriod, historySearch, routeFilter]);
+
   const visibleTabs = useMemo(
     () =>
       tabs.filter((tab) => {
@@ -433,9 +517,9 @@ export function DashboardShell() {
       }),
     [user.role],
   );
-  const sortedHistory = useMemo(() => [...history].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [history]);
-  const sortedApprovals = useMemo(() => [...approvals].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [approvals]);
-  const sortedNotices = useMemo(() => [...notices].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [notices]);
+  const sortedHistory = useMemo(() => [...history].sort((a, b) => parseDbDateTime(b.createdAt).getTime() - parseDbDateTime(a.createdAt).getTime()), [history]);
+  const sortedApprovals = useMemo(() => [...approvals].sort((a, b) => parseDbDateTime(b.createdAt).getTime() - parseDbDateTime(a.createdAt).getTime()), [approvals]);
+  const sortedNotices = useMemo(() => [...notices].sort((a, b) => parseDbDateTime(b.createdAt).getTime() - parseDbDateTime(a.createdAt).getTime()), [notices]);
   const sortedEmployees = useMemo(
     () =>
       [...employees].sort((a, b) => {
@@ -453,9 +537,17 @@ export function DashboardShell() {
     [editingEmployeeId, sortedEmployees],
   );
   const filteredHistory = useMemo(
-    () => sortedHistory.filter((item) => (!historySearch || searchText(item).includes(historySearch.toLowerCase())) && (routeFilter === "ALL" || routeOf(item) === routeFilter) && matchHistoryFilter(item, historyFilter)),
-    [historyFilter, historySearch, routeFilter, sortedHistory],
+    () =>
+      sortedHistory.filter(
+        (item) =>
+          (!historySearch || searchText(item).includes(historySearch.toLowerCase())) &&
+          (routeFilter === "ALL" || routeOf(item) === routeFilter) &&
+          matchHistoryFilter(item, historyFilter) &&
+          matchHistoryPeriod(item, historyPeriod),
+      ),
+    [historyFilter, historyPeriod, historySearch, routeFilter, sortedHistory],
   );
+  const displayedHistory = useMemo(() => filteredHistory.slice(0, historyVisibleCount), [filteredHistory, historyVisibleCount]);
   const filteredApprovals = useMemo(() => (!approvalSearch ? sortedApprovals : sortedApprovals.filter((item) => searchText(item).includes(approvalSearch.toLowerCase()))), [approvalSearch, sortedApprovals]);
   const filteredEmployees = useMemo(
     () =>
@@ -487,7 +579,14 @@ export function DashboardShell() {
   }
 
   async function handleCancelApprovedRequest(item: LeaveRequestItem) {
-    if (!window.confirm("이미 승인된 휴가를 취소할까요?")) return;
+    const confirmed = window.confirm(
+      [
+        `${item.employeeName}님의 ${formatDateRange(item)} 휴가입니다.`,
+        "이미 승인된 휴가를 정말 취소하시겠습니까?",
+        "취소하면 잔여 연차에 다시 반영됩니다.",
+      ].join("\n\n"),
+    );
+    if (!confirmed) return;
     await handleApproval({ requestId: item.id, action: "CANCEL" });
   }
 
@@ -546,6 +645,7 @@ export function DashboardShell() {
     setEmployeeEditorOpen(false);
     setEditingEmployeeId(null);
     setEmployeeForm(emptyEmployeeForm);
+    setEmployeeOriginalAdjustment(0);
     setRetiredAtInput("");
   }
 
@@ -559,7 +659,8 @@ export function DashboardShell() {
 
   function openEmployeeCreate() {
     setEditingEmployeeId(null);
-    setEmployeeForm(emptyEmployeeForm);
+    setEmployeeForm({ ...emptyEmployeeForm, employeeNo: getNextEmployeeNoSuggestion(sortedEmployees) });
+    setEmployeeOriginalAdjustment(0);
     setRetiredAtInput("");
     setEmployeeEditorOpen(true);
   }
@@ -576,7 +677,10 @@ export function DashboardShell() {
       orgUnitId: item.orgUnitId,
       leaderId: item.leaderId,
       isActive: item.isActive,
+      leaveAdjustmentDays: String(item.leaveAdjustmentDays ?? 0),
+      adjustmentReason: "",
     });
+    setEmployeeOriginalAdjustment(item.leaveAdjustmentDays ?? 0);
     setRetiredAtInput(item.retiredAt ?? "");
     setEmployeeEditorOpen(true);
   }
@@ -601,8 +705,25 @@ export function DashboardShell() {
 
   async function handleEmployeeSubmit() {
     if (!employeeForm.name.trim() || !employeeForm.employeeNo.trim() || !employeeForm.email.trim()) return;
+    const leaveAdjustmentDays = parseAdjustmentInput(employeeForm.leaveAdjustmentDays);
+
+    if (!Number.isFinite(leaveAdjustmentDays)) {
+      setToast("연차 조정값은 숫자로 입력해 주세요.");
+      return;
+    }
+
+    if (Math.abs(leaveAdjustmentDays * 2 - Math.round(leaveAdjustmentDays * 2)) > 1e-9) {
+      setToast("연차 조정값은 0.5일 단위로 입력해 주세요.");
+      return;
+    }
 
     if (editingEmployeeId) {
+      const adjustmentChanged = leaveAdjustmentDays !== employeeOriginalAdjustment;
+      if (adjustmentChanged && !employeeForm.adjustmentReason.trim()) {
+        setToast("연차 조정 사유를 입력해 주세요.");
+        return;
+      }
+
       const ok = await updateEmployee(
         editingEmployeeId,
         {
@@ -611,6 +732,8 @@ export function DashboardShell() {
           role: employeeForm.role,
           orgUnitId: employeeForm.orgUnitId,
           leaderId: employeeForm.leaderId,
+          leaveAdjustmentDays,
+          adjustmentReason: adjustmentChanged ? employeeForm.adjustmentReason.trim() : undefined,
           isActive: employeeForm.isActive,
           password: employeeForm.password.trim() || undefined,
         },
@@ -629,11 +752,15 @@ export function DashboardShell() {
 
     const ok = await createEmployee(
       {
-        ...employeeForm,
         employeeNo: employeeForm.employeeNo.trim(),
         name: employeeForm.name.trim(),
         email: employeeForm.email.trim(),
         password: employeeForm.password.trim(),
+        joinedAt: employeeForm.joinedAt,
+        role: employeeForm.role,
+        orgUnitId: employeeForm.orgUnitId,
+        leaderId: employeeForm.leaderId,
+        isActive: employeeForm.isActive,
       },
       user.id,
       user.role,
@@ -738,20 +865,17 @@ export function DashboardShell() {
                 <a href={ONE_STEP_URL} target="_blank" rel="noreferrer" className="rounded-[1.4rem] bg-accent px-4 py-4 text-left text-white">
                   <span className="block text-base font-semibold">원스텝 제안</span>
                 </a>
-                {showHistoryCard ? (
-                  <button type="button" className="rounded-[1.4rem] bg-mist px-4 py-4 text-left" onClick={() => setActiveTab("history")}>
+                  {showHistoryCard ? (
+                    <button type="button" className="rounded-[1.4rem] bg-mist px-4 py-4 text-left" onClick={openHistoryTab}>
                     <span className="block text-sm text-slate-500">내역</span>
                     <span className="mt-2 block text-xl font-semibold text-ink">{history.length}건</span>
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className={`${showHistoryCard ? "" : "col-span-2 "}rounded-[1.4rem] bg-accent/10 px-4 py-4 text-left`}
-                  onClick={() => {
-                    setHistoryFilter("IN_FLIGHT");
-                    setActiveTab("history");
-                  }}
-                >
+                  <button
+                    type="button"
+                    className={`${showHistoryCard ? "" : "col-span-2 "}rounded-[1.4rem] bg-accent/10 px-4 py-4 text-left`}
+                    onClick={openPendingHistoryTab}
+                  >
                   <span className="block text-sm text-slate-500">승인 대기</span>
                   <span className="mt-2 block text-xl font-semibold text-accent-strong">{inFlight.length}건</span>
                 </button>
@@ -795,7 +919,7 @@ export function DashboardShell() {
             <section className="space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold tracking-tight text-ink">진행 중 신청</h2>
-                <button type="button" className="text-sm font-semibold text-accent-strong" onClick={() => setActiveTab("history")}>
+                <button type="button" className="text-sm font-semibold text-accent-strong" onClick={openHistoryTab}>
                   전체 보기
                 </button>
               </div>
@@ -815,11 +939,18 @@ export function DashboardShell() {
             <article className="rounded-[1.8rem] border border-white/70 bg-white/90 p-4 shadow-card">
               <div className="grid gap-3">
                 <input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="이름, 사번, 사유 검색" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10" />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <select value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value as HistoryFilterKey)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10">
                     {historyFilters.map((filter) => (
                       <option key={filter.key} value={filter.key}>
                         {filter.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select value={historyPeriod} onChange={(event) => setHistoryPeriod(event.target.value as HistoryPeriodKey)} className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10">
+                    {historyPeriods.map((period) => (
+                      <option key={period.key} value={period.key}>
+                        {period.label}
                       </option>
                     ))}
                   </select>
@@ -838,8 +969,8 @@ export function DashboardShell() {
             </article>
             <div className="text-sm font-semibold text-slate-500">총 {filteredHistory.length}건</div>
             <div className="space-y-3">
-              {filteredHistory.length ? (
-                filteredHistory.map((item) => (
+              {displayedHistory.length ? (
+                displayedHistory.map((item) => (
                   <RequestCard
                     key={item.id}
                     item={item}
@@ -872,6 +1003,15 @@ export function DashboardShell() {
               ) : (
                 <EmptyState label="조건에 맞는 신청 내역이 없습니다." />
               )}
+              {displayedHistory.length < filteredHistory.length ? (
+                <button
+                  type="button"
+                  className="w-full rounded-2xl bg-white/90 px-4 py-3 text-sm font-semibold text-slate-600 ring-1 ring-slate-200"
+                  onClick={() => setHistoryVisibleCount((current) => current + HISTORY_PAGE_SIZE)}
+                >
+                  더 보기
+                </button>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -1015,6 +1155,30 @@ export function DashboardShell() {
                       className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
                     />
                   </div>
+                  {editingEmployeeId ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={employeeForm.leaveAdjustmentDays}
+                          onChange={(event) => setEmployeeForm((current) => ({ ...current, leaveAdjustmentDays: event.target.value }))}
+                          placeholder="연차 조정값"
+                          className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                        />
+                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                          현재 조정값: {formatAdjustmentLabel(employeeOriginalAdjustment)}
+                        </div>
+                      </div>
+                      <textarea
+                        value={employeeForm.adjustmentReason}
+                        onChange={(event) => setEmployeeForm((current) => ({ ...current, adjustmentReason: event.target.value }))}
+                        placeholder="연차 조정 사유 (변경 시 필수)"
+                        rows={3}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+                      />
+                    </>
+                  ) : null}
                   <select
                     value={employeeForm.orgUnitId ?? ""}
                     onChange={(event) => setEmployeeForm((current) => ({ ...current, orgUnitId: event.target.value ? Number(event.target.value) : null }))}
@@ -1170,11 +1334,22 @@ export function DashboardShell() {
       <nav className="fixed inset-x-0 bottom-0 z-40">
         <div className="mx-auto max-w-[430px] px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
           <div className="grid gap-2 rounded-[1.8rem] border border-white/70 bg-white/95 p-2 shadow-panel backdrop-blur" style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}>
-            {visibleTabs.map((tab) => (
-              <button key={tab.key} type="button" className={`rounded-[1.2rem] px-3 py-3 text-sm font-semibold transition ${activeTab === tab.key ? "bg-brand-slate text-white" : "text-slate-500"}`} onClick={() => setActiveTab(tab.key)}>
-                {tab.label}
-              </button>
-            ))}
+              {visibleTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={`rounded-[1.2rem] px-3 py-3 text-sm font-semibold transition ${activeTab === tab.key ? "bg-brand-slate text-white" : "text-slate-500"}`}
+                  onClick={() => {
+                    if (tab.key === "history") {
+                      openHistoryTab();
+                      return;
+                    }
+                    setActiveTab(tab.key);
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
           </div>
         </div>
       </nav>

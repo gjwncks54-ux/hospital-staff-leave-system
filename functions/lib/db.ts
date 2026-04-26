@@ -310,6 +310,7 @@ export async function updateEmployeeForManagement(
     role: UserRole;
     orgUnitId: number | null;
     leaderId: number | null;
+    leaveAdjustmentDays: number;
     isActive: boolean;
     passwordHash?: string | null;
   },
@@ -324,6 +325,7 @@ export async function updateEmployeeForManagement(
           role = ?,
           org_unit_id = ?,
           leader_id = ?,
+          leave_adjustment_days = ?,
           password_hash = COALESCE(?, password_hash),
           is_active = ?,
           updated_at = CURRENT_TIMESTAMP
@@ -336,6 +338,7 @@ export async function updateEmployeeForManagement(
       input.role,
       input.orgUnitId,
       input.leaderId,
+      input.leaveAdjustmentDays,
       input.passwordHash ?? null,
       input.isActive ? 1 : 0,
       input.employeeId,
@@ -343,6 +346,43 @@ export async function updateEmployeeForManagement(
     .run();
 
   return result.meta.changes > 0;
+}
+
+export async function insertEmployeeLeaveAdjustmentLog(
+  db: D1Database,
+  input: {
+    employeeId: number;
+    actorId: number;
+    previousAdjustmentDays: number;
+    newAdjustmentDays: number;
+    reason: string;
+  },
+) {
+  const result = await db
+    .prepare(
+      `
+        INSERT INTO employee_leave_adjustments (
+          employee_id,
+          actor_id,
+          previous_adjustment_days,
+          new_adjustment_days,
+          delta_days,
+          reason
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .bind(
+      input.employeeId,
+      input.actorId,
+      input.previousAdjustmentDays,
+      input.newAdjustmentDays,
+      input.newAdjustmentDays - input.previousAdjustmentDays,
+      input.reason,
+    )
+    .run();
+
+  return Number(result.meta.last_row_id);
 }
 
 export async function countActiveDirectReports(db: D1Database, employeeId: number) {

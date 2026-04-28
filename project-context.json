@@ -1,266 +1,153 @@
 {
+  "schemaVersion": 2,
+  "generatedAt": "2026-04-28",
+  "handoffPurpose": "Allow a new Codex session or a different AI account to maintain the project without losing operational context.",
   "project": {
     "name": "Hospital Staff Leave Management System",
     "displayName": "우리베스트내과의원 휴가관리",
-    "workspaceName": "소중한 병원",
-    "status": "active_prototype",
-    "summary": "Mobile-first leave management web app for hospital staff. Supports leave requests, multi-step approvals, admin staff management, notices, and CSV exports.",
-    "generatedAt": "2026-04-17",
+    "status": "production-like active pilot",
+    "repository": "https://github.com/gjwncks54-ux/hospital-staff-leave-system",
+    "defaultBranch": "main",
+    "productionUrl": "https://hospital-staff-leave-system.pages.dev",
     "stack": {
       "frontend": ["React", "Vite", "TypeScript", "Tailwind CSS", "Zustand"],
       "backend": ["Cloudflare Pages Functions", "Hono", "Cloudflare D1"],
       "deployment": ["Cloudflare Pages", "Cloudflare D1"]
     }
   },
+  "commands": {
+    "test": "npm test",
+    "build": "npm run build",
+    "deploy": "npm run cf:deploy",
+    "productionHealthCheck": "curl.exe -I https://hospital-staff-leave-system.pages.dev/"
+  },
   "deployment": {
-    "productionUrl": "https://hospital-staff-leave-system.pages.dev",
-    "healthcheckUrl": "https://hospital-staff-leave-system.pages.dev/api/health",
-    "pagesProjectName": "hospital-staff-leave-system",
+    "cloudflarePagesProject": "hospital-staff-leave-system",
     "d1BindingName": "DB",
-    "latestVerifiedBundle": "index-Dey99k7N.js",
+    "wranglerConfig": "wrangler.toml",
     "notes": [
-      "Production healthcheck was verified on 2026-04-16.",
-      "Recent UI/API changes were deployed after build verification.",
-      "Employee master CSV was imported into remote D1 on 2026-04-17.",
-      "Current production HTML points to bundle index-Dey99k7N.js, and a fresh Pages deployment was created at https://d09e14dc.hospital-staff-leave-system.pages.dev."
+      "Use npm run cf:deploy for production deployment.",
+      "After deploy, verify the production URL responds with HTTP 200.",
+      "The app intentionally uses the pages.dev URL unless a custom domain is added later."
+    ]
+  },
+  "operationalRules": {
+    "mustDo": [
+      "Gather evidence before editing.",
+      "Run npm test and npm run build after business logic changes.",
+      "Keep production DB changes targeted and review SELECT results before UPDATE or DELETE.",
+      "Commit and push production-relevant code changes to main when the user asks for GitHub sync."
+    ],
+    "mustNotDo": [
+      "Do not reset or recreate the production D1 database without explicit approval.",
+      "Do not commit secrets, cookies, local temp files, or credentials.",
+      "Do not commit .tmp-* files, .claude/, .wrangler/, or real env files.",
+      "Do not use destructive Git commands such as git reset --hard unless explicitly requested."
     ]
   },
   "auth": {
     "loginMethod": "employee_no + password",
-    "sessionMode": "JWT cookie",
-    "demoPassword": "Pilot2026!",
-    "importedInitialPasswordRule": "employee_no!",
-    "selfServicePasswordChange": true,
-    "adminEmployeePasswordReset": true,
-    "demoAccounts": [
-      {
-        "role": "USER",
-        "label": "직원",
-        "employeeNo": "SH-2024-013"
-      },
-      {
-        "role": "LEADER",
-        "label": "팀장",
-        "employeeNo": "SH-2021-004"
-      },
-      {
-        "role": "HR",
-        "label": "인사",
-        "employeeNo": "SH-2020-001"
-      },
-      {
-        "role": "ADMIN",
-        "label": "Admin",
-        "employeeNo": "SH-2020-010"
-      },
-      {
-        "role": "DIRECTOR",
-        "label": "원장",
-        "employeeNo": "SH-2018-001"
-      }
+    "sessionMode": "HTTP-only JWT cookie",
+    "loginRateLimit": {
+      "enabled": false,
+      "reason": "User requested removal; login attempts no longer lock or throttle accounts."
+    },
+    "passwordFeatures": [
+      "Self-service password change from profile.",
+      "Admin/Director can reset employee passwords from employee edit."
     ]
   },
   "roles": {
     "USER": {
-      "displayName": "직원",
-      "capabilities": [
-        "own_leave_request",
-        "own_history_view",
-        "own_balance_view"
-      ]
+      "label": "직원",
+      "capabilities": ["own_leave_request", "own_balance_view", "own_history_view"]
     },
     "LEADER": {
-      "displayName": "팀장",
-      "capabilities": [
-        "own_leave_request",
-        "own_team_history_view",
-        "leader_stage_approval_only"
-      ]
+      "label": "팀장",
+      "capabilities": ["own_leave_request", "own_and_team_scope", "leader_stage_approval_only"]
     },
     "HR": {
-      "displayName": "인사",
-      "capabilities": [
-        "hr_stage_approval_only",
-        "no_super_pass",
-        "no_employee_management",
-        "no_notice_write"
-      ]
+      "label": "인사",
+      "capabilities": ["hr_stage_approval_only"],
+      "restrictions": ["no_super_pass", "no_employee_management"]
     },
     "ADMIN": {
-      "displayName": "Admin",
-      "capabilities": [
-        "super_pass_approval",
-        "employee_management",
-        "notice_create_update_delete",
-        "employee_leave_csv_export"
-      ]
+      "label": "Admin",
+      "capabilities": ["employee_management", "notice_management", "leave_summary_export", "super_pass_approval"]
     },
     "DIRECTOR": {
-      "displayName": "원장",
-      "capabilities": [
-        "super_pass_approval",
-        "director_stage_approval",
-        "employee_management",
-        "notice_create_update_delete"
-      ]
+      "label": "원장",
+      "capabilities": ["employee_management", "notice_management", "super_pass_approval"]
     }
   },
   "approvalRules": {
-    "memberLeaveFlow": ["USER", "LEADER", "HR"],
-    "leaderLeaveFlow": ["LEADER", "HR", "DIRECTOR"],
+    "staffWithLeader": ["LEADER", "HR"],
+    "staffWithoutLeader": ["HR"],
+    "leaderLeave": ["HR"],
     "superPassRoles": ["ADMIN", "DIRECTOR"],
-    "superPassBehavior": "ADMIN and DIRECTOR can approve any in-flight request immediately to the final status for that route.",
-    "notes": [
-      "Normal approval order is preserved for LEADER and HR.",
-      "HR is not a super-pass role."
-    ]
+    "requesterPendingCancel": true,
+    "finalApprovedCancel": "Admin/Director and final approver logic exists in the approval route."
   },
-  "employeeManagement": {
-    "initialImport": {
-      "mode": "manual_csv_handoff",
-      "status": "applied_to_remote_d1",
-      "sourceCsvPath": "C:/Users/Dennis Heo/Desktop/employee-import-template.csv",
-      "importedEmployeeCount": 63,
-      "initialPasswordRule": "employee_no!",
-      "importTool": "scripts/generate-employee-import.mjs",
-      "templateFile": "employee-import-template.csv",
-      "templateColumns": [
-        "employee_no",
-        "name",
-        "email",
-        "joined_at",
-        "role",
-        "org_unit_name",
-        "leader_employee_no",
-        "is_active"
-      ]
+  "leavePolicy": {
+    "calculationMode": "real-time, not daily DB accrual",
+    "timezone": "Asia/Seoul (KST)",
+    "joinedAtBased": true,
+    "underOneYear": {
+      "rule": "1 day per completed month, max 11",
+      "unpaidLeaveEffect": "UNPAID leave overlapping a monthly accrual period blocks that month's monthly leave."
     },
-    "ongoingOperations": {
-      "managedInApp": true,
-      "allowedRoles": ["ADMIN", "DIRECTOR"],
-      "supportedActions": [
-        "create_employee",
-        "edit_joined_at",
-        "change_org_unit",
-        "change_leader",
-        "deactivate_employee",
-        "set_retired_at"
-      ]
+    "oneYearOrMore": {
+      "rule": "15 days on work anniversary, +1 day every 2 years, max 25"
     },
-    "csvExports": [
-      {
-        "name": "employee_leave_summary",
-        "allowedRoles": ["ADMIN", "DIRECTOR"],
-        "columns": [
-          "employee_no",
-          "name",
-          "joined_at",
-          "entitlement",
-          "used",
-          "remaining"
-        ],
-        "scope": "current filtered employee list from Admin employee tab"
-      }
-    ]
+    "halfDayUnit": 0.5,
+    "nonDeductingLeaveTypes": ["SICK", "UNPAID"],
+    "displayNote": "SICK is a legacy enum currently used/displayed as public or official leave."
   },
-  "features": {
-    "implemented": [
-      "login",
-      "leave_balance_calculation",
-      "leave_request_submission",
-      "half_day_support",
-      "history_filter_and_csv_download",
-      "leader_hr_director_approval_flow",
-      "admin_director_super_pass",
-      "notice_board",
-      "employee_management_tab",
-      "employee_leave_summary_csv_export",
-      "one_step_suggestion_link",
-      "self_password_change",
-      "admin_employee_password_reset"
-    ],
-    "notableUiRules": [
-      "Employee home hides the history summary card.",
-      "Approval waiting counts are role-scoped.",
-      "Admin/Director can see employee management tab.",
-      "HR does not see employee management or notice editing controls."
-    ]
+  "adminLeaveAdjustment": {
+    "uiMeaning": "Employee edit form leave field means target final remaining leave.",
+    "storedMeaning": "employees.leave_adjustment_days stores adjustment delta.",
+    "formula": "remaining = entitlement + adjustment - used - pending",
+    "conversion": "leave_adjustment_days = target_remaining - automatic_base_remaining",
+    "reasonRequiredWhenChanged": true,
+    "logTable": "employee_leave_adjustments",
+    "mobileNegativeInput": "Use text input with decimal inputMode, not input type=number, so mobile keyboards can enter negative values."
   },
-  "dataModel": {
-    "coreTables": [
-      "employees",
-      "org_units",
-      "leave_requests",
-      "leave_request_events",
-      "notices"
-    ],
-    "importantEmployeeFields": [
-      "employee_no",
-      "name",
-      "email",
-      "joined_at",
-      "retired_at",
-      "role",
-      "org_unit_id",
-      "leader_id",
-      "is_active"
-    ],
-    "migrations": [
-      "0001_init.sql",
-      "0002_seed.sql",
-      "0003_workflow_notices.sql",
-      "0004_employee_retirement.sql"
-    ],
-    "remoteD1Notes": [
-      "retired_at migration was applied remotely on 2026-04-16.",
-      "Remote employee master was replaced from the client CSV on 2026-04-17."
-    ]
+  "knownHistoricalCaveat": {
+    "summary": "A historical screen showed entitlement 17.0, used 0.0, pending 0.0, but remaining 1.0 for one employee.",
+    "currentStatus": "Current DB state could not reproduce the issue.",
+    "confirmedCurrentState": "For WB-0014, leave_adjustment_days was 0 and there were no leave_requests at the time of investigation.",
+    "limitation": "Old adjustment logs were missing because the log write function had existed but was not called. The code now writes adjustment logs."
   },
+  "recentImportantChanges": [
+    "KST date-boundary calculation was fixed in functions/lib/leave.ts.",
+    "Admin/Director employee cards show remaining leave and calculation basis.",
+    "Employee edit leave input now targets final remaining leave rather than raw adjustment.",
+    "Leave adjustment logs are written when adjustment changes.",
+    "Login rate limiting was intentionally removed.",
+    "Mobile negative leave input was fixed."
+  ],
   "keyFiles": {
-    "frontend": [
-      "src/components/dashboard-shell.tsx",
-      "src/components/login-screen.tsx",
-      "src/components/request-modal.tsx",
-      "src/stores/leave-store.ts",
-      "src/stores/auth-store.ts",
-      "src/lib/api.ts",
-      "src/lib/approval-flow.ts",
-      "src/types.ts"
-    ],
-    "backend": [
-      "functions/api/[[route]].ts",
-      "functions/lib/db.ts",
-      "functions/lib/auth.ts",
-      "functions/lib/leave.ts"
-    ],
-    "config": [
-      "wrangler.toml",
-      "tailwind.config.ts",
-      "package.json"
-    ],
-    "handoff": [
-      "README.md",
-      "project-context.json",
-      "employee-import-template.csv",
-      "scripts/generate-employee-import.mjs"
-    ]
+    "readFirst": "READ_FIRST_FOR_CODEX.md",
+    "apiRoutes": "functions/api/[[route]].ts",
+    "dbHelpers": "functions/lib/db.ts",
+    "auth": "functions/lib/auth.ts",
+    "leaveCalculation": "functions/lib/leave.ts",
+    "approvalRules": "src/lib/approval-flow.ts",
+    "mainDashboard": "src/components/dashboard-shell.tsx",
+    "leaveStore": "src/stores/leave-store.ts",
+    "authStore": "src/stores/auth-store.ts",
+    "types": "src/types.ts",
+    "migrations": "migrations/"
   },
-  "operationalNotes": {
-    "git": {
-      "defaultBranch": "main",
-      "latestPushedCommit": "f4cd5e7",
-      "latestPushedSummary": "Add admin workflows and employee leave export"
-    },
-    "currentAssumptions": [
-      "There is only one Admin user in real operation.",
-      "Initial employee import is handled via CSV, not in-app bulk upload.",
-      "Ongoing staff changes are handled in-app by Admin.",
-      "Imported employee accounts currently use employee_no! as the temporary initial password."
-    ],
-    "followUpIdeas": [
-      "Optional conflict protection for employee edits using updated_at",
-      "Optional in-app bulk CSV import UI for Admin",
-      "Optional password reset feature for Admin"
-    ]
-  }
+  "recommendedNewCodexWorkflow": [
+    "Read READ_FIRST_FOR_CODEX.md.",
+    "Read this project-context.json.",
+    "Run git status --short.",
+    "Inspect relevant files before editing.",
+    "Make targeted edits only.",
+    "Run npm test.",
+    "Run npm run build.",
+    "Deploy with npm run cf:deploy only when requested or clearly needed.",
+    "Commit and push to main when the user asks for GitHub sync."
+  ]
 }

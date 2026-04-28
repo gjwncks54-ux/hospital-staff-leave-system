@@ -3,13 +3,6 @@ import { z } from "zod";
 import { getApprovalStages, getNextPendingStage, getStatusAfterStage } from "../../src/lib/approval-flow";
 import { authGuard, clearSession, hashPassword, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
 import {
-  clearEmployeeLoginFailures,
-  getLoginRateLimitState,
-  LOGIN_RATE_LIMIT,
-  normalizeEmployeeNoForRateLimit,
-  recordFailedLoginAttempt,
-} from "../lib/rate-limit";
-import {
   countActiveDirectReports,
   createEmployeeForManagement,
   deleteNotice,
@@ -86,6 +79,7 @@ const noticeSchema = z.object({
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const isHalfDayStep = (value: number) => Number.isFinite(value) && Math.abs(value * 2 - Math.round(value * 2)) < 1e-9;
+const roundLeaveDays = (value: number) => Number(value.toFixed(1));
 
 const employeeUpdateSchema = z.object({
   joinedAt: z.string().regex(datePattern),
@@ -96,6 +90,9 @@ const employeeUpdateSchema = z.object({
   leaveAdjustmentDays: z.number().finite().refine(isHalfDayStep, {
     message: "연차 조정값은 0.5일 단위로 입력해 주세요.",
   }),
+  targetRemainingDays: z.number().finite().min(0).refine(isHalfDayStep, {
+    message: "최종 잔여연차는 0.5일 단위로 입력해 주세요.",
+  }).optional(),
   adjustmentReason: z.string().trim().min(2).max(200).optional(),
   isActive: z.boolean(),
   password: z.string().trim().min(8).max(100).optional(),
@@ -122,17 +119,6 @@ app.use("*", async (c, next) => {
 
 app.get("/api/health", (c) => c.json({ ok: true, date: "2026-04-16" }));
 
-function getClientIp(c: any) {
-  const forwardedFor = c.req.header("x-forwarded-for");
-  const clientIp = c.req.header("cf-connecting-ip") ?? forwardedFor?.split(",")[0]?.trim();
-  return clientIp && clientIp.length <= 64 ? clientIp : "unknown";
-}
-
-function tooManyLoginAttempts(c: any) {
-  c.header("Retry-After", String(LOGIN_RATE_LIMIT.retryAfterSeconds));
-  return c.json({ message: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." }, 429);
-}
-
 app.post("/api/auth/login", async (c) => {
   try {
     const body = loginSchema.safeParse(await c.req.json().catch(() => null));
@@ -140,38 +126,16 @@ app.post("/api/auth/login", async (c) => {
       return c.json({ message: "사번과 비밀번호를 다시 확인해 주세요." }, 400);
     }
 
-    const normalizedEmployeeNo = normalizeEmployeeNoForRateLimit(body.data.employeeNo);
-    const clientIp = getClientIp(c);
-    const rateLimit = await getLoginRateLimitState(c.env.DB, clientIp, normalizedEmployeeNo);
-    if (rateLimit.blocked) {
-      return tooManyLoginAttempts(c);
-    }
-
     const employee = await getEmployeeByEmployeeNo(c.env.DB, body.data.employeeNo);
     if (!employee || employee.is_active !== 1) {
-      await recordFailedLoginAttempt(c.env.DB, clientIp, normalizedEmployeeNo);
-      if (
-        rateLimit.ipFailures + 1 >= LOGIN_RATE_LIMIT.ipMaxFailures ||
-        rateLimit.employeeFailures + 1 >= LOGIN_RATE_LIMIT.employeeMaxFailures
-      ) {
-        return tooManyLoginAttempts(c);
-      }
       return c.json({ message: "활성화된 계정을 찾을 수 없습니다." }, 401);
     }
 
     const passwordOk = await verifyPassword(body.data.password, employee.password_hash);
     if (!passwordOk) {
-      await recordFailedLoginAttempt(c.env.DB, clientIp, normalizedEmployeeNo);
-      if (
-        rateLimit.ipFailures + 1 >= LOGIN_RATE_LIMIT.ipMaxFailures ||
-        rateLimit.employeeFailures + 1 >= LOGIN_RATE_LIMIT.employeeMaxFailures
-      ) {
-        return tooManyLoginAttempts(c);
-      }
       return c.json({ message: "비밀번호가 올바르지 않습니다." }, 401);
     }
 
-    await clearEmployeeLoginFailures(c.env.DB, normalizedEmployeeNo);
     await setSession(c.env, c.req.url, employee, c);
     return c.json({ user: serializeEmployee(employee) });
   } catch (error) {
@@ -271,8 +235,30 @@ app.delete("/api/notices/:noticeId", authGuard(["ADMIN", "DIRECTOR"]), async (c)
   return c.json({ ok: true });
 });
 
+type ManagedEmployee = Awaited<ReturnType<typeof listEmployeesForManagement>>[number];
+
+async function attachLeaveSummaryToEmployee(db: D1Database, employee: ManagedEmployee) {
+  const cycle = calculateLeaveCycle(employee.joinedAt);
+  const rows = await listCycleLeaveRows(db, employee.id, cycle.cycleStart, cycle.cycleEnd);
+  const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows, employee.leaveAdjustmentDays);
+
+  return {
+    ...employee,
+    leaveEntitlementDays: summary.entitlement,
+    usedLeaveDays: summary.used,
+    pendingLeaveDays: summary.pending,
+    remainingLeaveDays: summary.remaining,
+    leaveBaseRemainingDays: roundLeaveDays(summary.entitlement - summary.used - summary.pending),
+  };
+}
+
+async function attachLeaveSummariesToEmployees(db: D1Database, employees: ManagedEmployee[]) {
+  return Promise.all(employees.map((employee) => attachLeaveSummaryToEmployee(db, employee)));
+}
+
 app.get("/api/admin/employees", authGuard(["ADMIN", "DIRECTOR"]), async (c) => {
-  const [items, orgUnits] = await Promise.all([listEmployeesForManagement(c.env.DB), listOrgUnits(c.env.DB)]);
+  const [employees, orgUnits] = await Promise.all([listEmployeesForManagement(c.env.DB), listOrgUnits(c.env.DB)]);
+  const items = await attachLeaveSummariesToEmployees(c.env.DB, employees);
   return c.json({ items, orgUnits });
 });
 
@@ -351,7 +337,7 @@ app.post("/api/admin/employees", authGuard(["ADMIN", "DIRECTOR"]), async (c) => 
   });
 
   const item = await getManagedEmployeeById(c.env.DB, employeeId);
-  return c.json({ item }, 201);
+  return c.json({ item: item ? await attachLeaveSummaryToEmployee(c.env.DB, item) : null }, 201);
 });
 
 app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), async (c) => {
@@ -412,7 +398,15 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     }
   }
 
-  const adjustmentChanged = (currentEmployee.leave_adjustment_days ?? 0) !== body.data.leaveAdjustmentDays;
+  let nextLeaveAdjustmentDays = body.data.leaveAdjustmentDays;
+  if (body.data.targetRemainingDays !== undefined) {
+    const cycle = calculateLeaveCycle(body.data.joinedAt);
+    const rows = await listCycleLeaveRows(c.env.DB, employeeId, cycle.cycleStart, cycle.cycleEnd);
+    const summary = buildLeaveSummary(body.data.joinedAt, body.data.role, body.data.leaderId !== null, rows, 0);
+    nextLeaveAdjustmentDays = roundLeaveDays(body.data.targetRemainingDays - (summary.entitlement - summary.used - summary.pending));
+  }
+
+  const adjustmentChanged = (currentEmployee.leave_adjustment_days ?? 0) !== nextLeaveAdjustmentDays;
   if (adjustmentChanged && !body.data.adjustmentReason?.trim()) {
     return c.json({ message: "연차 조정값을 변경할 때는 사유를 함께 입력해 주세요." }, 400);
   }
@@ -430,7 +424,7 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     role: body.data.role,
     orgUnitId: body.data.orgUnitId,
     leaderId: body.data.leaderId,
-    leaveAdjustmentDays: body.data.leaveAdjustmentDays,
+    leaveAdjustmentDays: nextLeaveAdjustmentDays,
     isActive: body.data.isActive,
     passwordHash,
   });
@@ -439,8 +433,18 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     return c.json({ message: "직원 정보를 찾을 수 없습니다." }, 404);
   }
 
+  if (adjustmentChanged) {
+    await insertEmployeeLeaveAdjustmentLog(c.env.DB, {
+      employeeId,
+      actorId: actor.id,
+      previousAdjustmentDays: currentEmployee.leave_adjustment_days ?? 0,
+      newAdjustmentDays: nextLeaveAdjustmentDays,
+      reason: body.data.adjustmentReason?.trim() ?? "",
+    });
+  }
+
   const item = await getManagedEmployeeById(c.env.DB, employeeId);
-  return c.json({ item });
+  return c.json({ item: item ? await attachLeaveSummaryToEmployee(c.env.DB, item) : null });
 });
 
 app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {

@@ -90,9 +90,27 @@ function parseAdjustmentInput(value: string) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
-function formatAdjustmentLabel(value: number) {
-  if (value === 0) return "조정 없음";
-  return `${value > 0 ? "+" : ""}${formatNumber(value)}일`;
+function getEmployeeBaseRemainingDays(item: ManagedEmployeeItem) {
+  if (typeof item.leaveBaseRemainingDays === "number") return item.leaveBaseRemainingDays;
+  if (typeof item.remainingLeaveDays === "number") return Number((item.remainingLeaveDays - item.leaveAdjustmentDays).toFixed(1));
+  return 0;
+}
+
+function getEmployeeRemainingDays(item: ManagedEmployeeItem) {
+  if (typeof item.remainingLeaveDays === "number") return item.remainingLeaveDays;
+  return Math.max(0, getEmployeeBaseRemainingDays(item) + item.leaveAdjustmentDays);
+}
+
+function getEmployeeEntitlementDays(item: ManagedEmployeeItem) {
+  return typeof item.leaveEntitlementDays === "number" ? item.leaveEntitlementDays : getEmployeeBaseRemainingDays(item);
+}
+
+function getEmployeeUsedDays(item: ManagedEmployeeItem) {
+  return typeof item.usedLeaveDays === "number" ? item.usedLeaveDays : 0;
+}
+
+function getEmployeePendingDays(item: ManagedEmployeeItem) {
+  return typeof item.pendingLeaveDays === "number" ? item.pendingLeaveDays : 0;
 }
 
 function getNextEmployeeNoSuggestion(items: ManagedEmployeeItem[]) {
@@ -387,6 +405,21 @@ function EmployeeRow({
           수정
         </button>
       </div>
+      <div className="mt-4 flex justify-end">
+        <span className="rounded-full bg-mint/12 px-3 py-1.5 text-sm font-bold text-mint">
+          잔여 {formatNumber(getEmployeeRemainingDays(item))}일
+        </span>
+      </div>
+      <div className="mt-3 rounded-[1.2rem] bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+        <span className="font-semibold text-slate-600">산정 기준</span>
+        <span className="ml-2">
+          발생 {formatNumber(getEmployeeEntitlementDays(item))}
+          {" + "}조정 {formatNumber(item.leaveAdjustmentDays)}
+          {" - "}사용 {formatNumber(getEmployeeUsedDays(item))}
+          {" - "}예정 {formatNumber(getEmployeePendingDays(item))}
+          {" = "}잔여 {formatNumber(getEmployeeRemainingDays(item))}일
+        </span>
+      </div>
     </article>
   );
 }
@@ -440,6 +473,8 @@ export function DashboardShell() {
   const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
   const [employeeForm, setEmployeeForm] = useState<EmployeeFormState>(emptyEmployeeForm);
   const [employeeOriginalAdjustment, setEmployeeOriginalAdjustment] = useState(0);
+  const [employeeBaseRemainingDays, setEmployeeBaseRemainingDays] = useState(0);
+  const [employeeOriginalRemainingDays, setEmployeeOriginalRemainingDays] = useState(0);
 
   function openHistoryTab() {
     setHistorySearch("");
@@ -646,6 +681,8 @@ export function DashboardShell() {
     setEditingEmployeeId(null);
     setEmployeeForm(emptyEmployeeForm);
     setEmployeeOriginalAdjustment(0);
+    setEmployeeBaseRemainingDays(0);
+    setEmployeeOriginalRemainingDays(0);
     setRetiredAtInput("");
   }
 
@@ -661,11 +698,15 @@ export function DashboardShell() {
     setEditingEmployeeId(null);
     setEmployeeForm({ ...emptyEmployeeForm, employeeNo: getNextEmployeeNoSuggestion(sortedEmployees) });
     setEmployeeOriginalAdjustment(0);
+    setEmployeeBaseRemainingDays(0);
+    setEmployeeOriginalRemainingDays(0);
     setRetiredAtInput("");
     setEmployeeEditorOpen(true);
   }
 
   function openEmployeeEdit(item: ManagedEmployeeItem) {
+    const baseRemainingDays = getEmployeeBaseRemainingDays(item);
+    const remainingDays = getEmployeeRemainingDays(item);
     setEditingEmployeeId(item.id);
     setEmployeeForm({
       employeeNo: item.employeeNo,
@@ -677,10 +718,12 @@ export function DashboardShell() {
       orgUnitId: item.orgUnitId,
       leaderId: item.leaderId,
       isActive: item.isActive,
-      leaveAdjustmentDays: String(item.leaveAdjustmentDays ?? 0),
+      leaveAdjustmentDays: String(remainingDays),
       adjustmentReason: "",
     });
     setEmployeeOriginalAdjustment(item.leaveAdjustmentDays ?? 0);
+    setEmployeeBaseRemainingDays(baseRemainingDays);
+    setEmployeeOriginalRemainingDays(remainingDays);
     setRetiredAtInput(item.retiredAt ?? "");
     setEmployeeEditorOpen(true);
   }
@@ -705,22 +748,31 @@ export function DashboardShell() {
 
   async function handleEmployeeSubmit() {
     if (!employeeForm.name.trim() || !employeeForm.employeeNo.trim() || !employeeForm.email.trim()) return;
-    const leaveAdjustmentDays = parseAdjustmentInput(employeeForm.leaveAdjustmentDays);
-
-    if (!Number.isFinite(leaveAdjustmentDays)) {
-      setToast("연차 조정값은 숫자로 입력해 주세요.");
-      return;
-    }
-
-    if (Math.abs(leaveAdjustmentDays * 2 - Math.round(leaveAdjustmentDays * 2)) > 1e-9) {
-      setToast("연차 조정값은 0.5일 단위로 입력해 주세요.");
-      return;
-    }
 
     if (editingEmployeeId) {
+      const targetRemainingDays = parseAdjustmentInput(employeeForm.leaveAdjustmentDays);
+      if (!Number.isFinite(targetRemainingDays)) {
+        setToast("최종 잔여연차는 숫자로 입력해 주세요.");
+        return;
+      }
+
+      if (targetRemainingDays < 0) {
+        setToast("최종 잔여연차는 0일 이상으로 입력해 주세요.");
+        return;
+      }
+
+      if (Math.abs(targetRemainingDays * 2 - Math.round(targetRemainingDays * 2)) > 1e-9) {
+        setToast("최종 잔여연차는 0.5일 단위로 입력해 주세요.");
+        return;
+      }
+
+      const targetChanged = targetRemainingDays !== employeeOriginalRemainingDays;
+      const leaveAdjustmentDays = targetChanged
+        ? Number((targetRemainingDays - employeeBaseRemainingDays).toFixed(1))
+        : employeeOriginalAdjustment;
       const adjustmentChanged = leaveAdjustmentDays !== employeeOriginalAdjustment;
       if (adjustmentChanged && !employeeForm.adjustmentReason.trim()) {
-        setToast("연차 조정 사유를 입력해 주세요.");
+        setToast("잔여연차 변경 사유를 입력해 주세요.");
         return;
       }
 
@@ -733,6 +785,7 @@ export function DashboardShell() {
           orgUnitId: employeeForm.orgUnitId,
           leaderId: employeeForm.leaderId,
           leaveAdjustmentDays,
+          targetRemainingDays: targetChanged ? targetRemainingDays : undefined,
           adjustmentReason: adjustmentChanged ? employeeForm.adjustmentReason.trim() : undefined,
           isActive: employeeForm.isActive,
           password: employeeForm.password.trim() || undefined,
@@ -1159,21 +1212,21 @@ export function DashboardShell() {
                     <>
                       <div className="grid grid-cols-2 gap-3">
                         <input
-                          type="number"
-                          step="0.5"
+                          type="text"
+                          inputMode="decimal"
                           value={employeeForm.leaveAdjustmentDays}
                           onChange={(event) => setEmployeeForm((current) => ({ ...current, leaveAdjustmentDays: event.target.value }))}
-                          placeholder="연차 조정값"
+                          placeholder="최종 잔여연차"
                           className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
                         />
                         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                          현재 조정값: {formatAdjustmentLabel(employeeOriginalAdjustment)}
+                          현재 잔여 {formatNumber(employeeOriginalRemainingDays)}일
                         </div>
                       </div>
                       <textarea
                         value={employeeForm.adjustmentReason}
                         onChange={(event) => setEmployeeForm((current) => ({ ...current, adjustmentReason: event.target.value }))}
-                        placeholder="연차 조정 사유 (변경 시 필수)"
+                        placeholder="변경 사유 (잔여연차 변경 시 필수)"
                         rows={3}
                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
                       />

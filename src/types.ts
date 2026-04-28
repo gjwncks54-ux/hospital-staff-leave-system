@@ -90,6 +90,11 @@ export interface ManagedEmployeeItem {
   role: UserRole;
   joinedAt: string;
   leaveAdjustmentDays: number;
+  leaveEntitlementDays?: number;
+  usedLeaveDays?: number;
+  pendingLeaveDays?: number;
+  remainingLeaveDays?: number;
+  leaveBaseRemainingDays?: number;
   retiredAt: string | null;
   isActive: boolean;
   orgUnitId: number | null;
@@ -106,6 +111,7 @@ export interface EmployeeUpdateInput {
   orgUnitId: number | null;
   leaderId: number | null;
   leaveAdjustmentDays: number;
+  targetRemainingDays?: number;
   adjustmentReason?: string;
   isActive: boolean;
   password?: string;

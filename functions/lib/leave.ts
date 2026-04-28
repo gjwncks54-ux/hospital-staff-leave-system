@@ -4,17 +4,27 @@ import type { LeaveStatus, LeaveType } from "./db";
 
 const DAY_MS = 86400000;
 
+function parseDateParts(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return { year, month, day };
+}
+
 function parseDate(value: string) {
-  return new Date(`${value}T00:00:00+09:00`);
+  const { year, month, day } = parseDateParts(value);
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 function formatDate(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function formatKstDate(date: Date) {
+  return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function addDays(date: Date, days: number) {
   const next = new Date(date);
-  next.setDate(next.getDate() + days);
+  next.setUTCDate(next.getUTCDate() + days);
   return next;
 }
 
@@ -30,49 +40,51 @@ function addMonthsClamped(joinedAtStr: string, months: number): Date {
   return parseDate(`${targetYear}-${mm}-${dd}`);
 }
 
+function addYearsClamped(joinedAtStr: string, years: number): Date {
+  return addMonthsClamped(joinedAtStr, years * 12);
+}
+
 function overlapsRange(rowStartDate: string, rowEndDate: string, periodStart: Date, periodEndExclusive: Date) {
   const rowStart = parseDate(rowStartDate);
   const rowEndExclusive = addDays(parseDate(rowEndDate), 1);
   return rowStart < periodEndExclusive && rowEndExclusive > periodStart;
 }
 
-function fullYearsBetween(start: Date, end: Date) {
-  let years = end.getFullYear() - start.getFullYear();
-  const anniversaryThisYear = new Date(end.getFullYear(), start.getMonth(), start.getDate());
-  if (end < anniversaryThisYear) {
+function fullYearsBetween(joinedAt: string, asOfDate: string) {
+  const joined = parseDateParts(joinedAt);
+  const asOf = parseDateParts(asOfDate);
+  let years = asOf.year - joined.year;
+  if (asOf.month < joined.month || (asOf.month === joined.month && asOf.day < joined.day)) {
     years -= 1;
   }
   return Math.max(0, years);
 }
 
-function completedMonthsUnderOneYear(joinedAt: Date, asOf: Date) {
-  let months = (asOf.getFullYear() - joinedAt.getFullYear()) * 12 + (asOf.getMonth() - joinedAt.getMonth());
-  if (asOf.getDate() < joinedAt.getDate()) {
+function completedMonthsUnderOneYear(joinedAt: string, asOfDate: string) {
+  const joined = parseDateParts(joinedAt);
+  const asOf = parseDateParts(asOfDate);
+  let months = (asOf.year - joined.year) * 12 + (asOf.month - joined.month);
+  if (asOf.day < joined.day) {
     months -= 1;
   }
   return Math.min(Math.max(months, 0), 11);
 }
 
 export function calculateLeaveCycle(joinedAt: string, asOf = new Date()) {
-  const joined = parseDate(joinedAt);
-  const serviceYears = fullYearsBetween(joined, asOf);
+  const asOfDate = formatKstDate(asOf);
+  const serviceYears = fullYearsBetween(joinedAt, asOfDate);
 
   if (serviceYears < 1) {
-    const cycleEnd = new Date(joined);
-    cycleEnd.setFullYear(cycleEnd.getFullYear() + 1);
-
     return {
-      cycleStart: formatDate(joined),
-      cycleEnd: formatDate(cycleEnd),
+      cycleStart: joinedAt,
+      cycleEnd: formatDate(addYearsClamped(joinedAt, 1)),
       serviceYears,
-      entitlement: completedMonthsUnderOneYear(joined, asOf),
+      entitlement: completedMonthsUnderOneYear(joinedAt, asOfDate),
     };
   }
 
-  const anniversaryThisYear = new Date(asOf.getFullYear(), joined.getMonth(), joined.getDate());
-  const cycleStart = asOf < anniversaryThisYear ? new Date(asOf.getFullYear() - 1, joined.getMonth(), joined.getDate()) : anniversaryThisYear;
-  const cycleEnd = new Date(cycleStart);
-  cycleEnd.setFullYear(cycleEnd.getFullYear() + 1);
+  const cycleStart = addYearsClamped(joinedAt, serviceYears);
+  const cycleEnd = addYearsClamped(joinedAt, serviceYears + 1);
 
   return {
     cycleStart: formatDate(cycleStart),
@@ -106,8 +118,7 @@ function calculateUnderOneYearEntitlement(
   rows: Array<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string }>,
   asOf: Date,
 ) {
-  const joined = parseDate(joinedAt);
-  const completedMonths = completedMonthsUnderOneYear(joined, asOf);
+  const completedMonths = completedMonthsUnderOneYear(joinedAt, formatKstDate(asOf));
   const approvedUnpaidRows = rows.filter(
     (row) => row.type === "UNPAID" && row.status !== "REJECTED" && row.status !== "CANCELLED",
   );

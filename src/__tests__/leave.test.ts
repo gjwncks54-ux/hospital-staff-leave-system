@@ -26,6 +26,16 @@ describe("calculateLeaveCycle", () => {
     expect(result.entitlement).toBe(15);
   });
 
+  it("uses KST date boundaries for work anniversaries", () => {
+    const beforeAnniversary = calculateLeaveCycle("2021-04-26", kst("2026-04-25"));
+    const onAnniversary = calculateLeaveCycle("2021-04-26", kst("2026-04-26"));
+
+    expect(beforeAnniversary.serviceYears).toBe(4);
+    expect(beforeAnniversary.entitlement).toBe(16);
+    expect(onAnniversary.serviceYears).toBe(5);
+    expect(onAnniversary.entitlement).toBe(17);
+  });
+
   it("3 years → 16 days (15 + floor((3-1)/2))", () => {
     const result = calculateLeaveCycle("2022-01-01", kst("2025-02-01"));
     expect(result.serviceYears).toBe(3);

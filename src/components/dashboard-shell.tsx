@@ -1106,21 +1106,25 @@ export function DashboardShell() {
         {activeTab === "people" && canManageEmployees(user.role) ? (
           <section className="mt-4 space-y-4">
             <article className="rounded-[1.8rem] border border-white/70 bg-white/90 p-4 shadow-card">
-              <div className="flex items-center justify-between gap-3">
-                <div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
                   <h2 className="text-lg font-semibold tracking-tight text-ink">직원 관리</h2>
                   <p className="mt-1 text-sm text-slate-500">입사, 퇴사, 팀 이동을 여기서 관리합니다.</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:items-center">
                   <button
                     type="button"
-                    className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-12 items-center justify-center whitespace-nowrap rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-0"
                     onClick={() => void handleEmployeeExport()}
                     disabled={!filteredEmployees.length}
                   >
                     CSV 다운로드
                   </button>
-                  <button type="button" className="rounded-full bg-brand-slate px-4 py-2 text-sm font-semibold text-white" onClick={employeeEditorOpen ? resetEmployeeEditor : openEmployeeCreate}>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-12 items-center justify-center whitespace-nowrap rounded-full bg-brand-slate px-4 py-2 text-sm font-semibold text-white sm:min-h-0"
+                    onClick={employeeEditorOpen ? resetEmployeeEditor : openEmployeeCreate}
+                  >
                     {employeeEditorOpen ? "닫기" : "직원 추가"}
                   </button>
                 </div>

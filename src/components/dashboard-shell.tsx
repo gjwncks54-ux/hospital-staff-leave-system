@@ -13,7 +13,7 @@ import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
 import { useLeaveStore } from "../stores/leave-store";
-import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser, UserRole } from "../types";
+import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveSummary, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser, UserRole } from "../types";
 
 type TabKey = "home" | "history" | "approvals" | "people" | "profile";
 type HistoryFilterKey = "ALL" | "IN_FLIGHT" | "APPROVED" | "REJECTED";
@@ -63,6 +63,7 @@ const canWriteNotice = (role: UserRole) => role === "ADMIN" || role === "DIRECTO
 const canManageEmployees = (role: UserRole) => role === "ADMIN" || role === "DIRECTOR";
 const employeeStatusLabel = (item: ManagedEmployeeItem) => (item.isActive ? "재직" : "퇴사");
 const formatNumber = (value: number) => value.toFixed(1);
+const getDisplayUsedDays = (summary: LeaveSummary) => Number((summary.entitlement - summary.pending - summary.remaining).toFixed(1));
 const formatDate = (date: string) => new Date(date).toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
 function parseDbDateTime(date: string) {
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date)) {
@@ -905,7 +906,7 @@ export function DashboardShell() {
               </div>
               <div className="mt-6 grid grid-cols-3 gap-3">
                 <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">부여</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.entitlement) : "--"}</p></div>
-                <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">사용</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.used) : "--"}</p></div>
+                <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">사용</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(getDisplayUsedDays(summary)) : "--"}</p></div>
                 <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">예정</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.pending) : "--"}</p></div>
               </div>
             </article>
@@ -1379,7 +1380,7 @@ export function DashboardShell() {
               <h2 className="text-lg font-semibold tracking-tight text-ink">연차 현황</h2>
               <div className="mt-4 grid grid-cols-2 gap-3">
                 <div className="rounded-[1.3rem] bg-mist px-4 py-3"><p className="text-xs text-slate-500">부여</p><p className="mt-2 text-2xl font-semibold text-ink">{summary ? formatNumber(summary.entitlement) : "--"}</p></div>
-                <div className="rounded-[1.3rem] bg-mist px-4 py-3"><p className="text-xs text-slate-500">사용</p><p className="mt-2 text-2xl font-semibold text-ink">{summary ? formatNumber(summary.used) : "--"}</p></div>
+                <div className="rounded-[1.3rem] bg-mist px-4 py-3"><p className="text-xs text-slate-500">사용</p><p className="mt-2 text-2xl font-semibold text-ink">{summary ? formatNumber(getDisplayUsedDays(summary)) : "--"}</p></div>
                 <div className="rounded-[1.3rem] bg-accent/10 px-4 py-3"><p className="text-xs text-slate-500">예정</p><p className="mt-2 text-2xl font-semibold text-accent-strong">{summary ? formatNumber(summary.pending) : "--"}</p></div>
                 <div className="rounded-[1.3rem] bg-brand-slate px-4 py-3 text-white"><p className="text-xs text-white/70">잔여</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.remaining) : "--"}</p></div>
               </div>

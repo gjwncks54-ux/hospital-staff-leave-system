@@ -90,6 +90,8 @@ export interface ManagedEmployeeItem {
   role: UserRole;
   joinedAt: string;
   leaveAdjustmentDays: number;
+  leaveAdjustmentCycleStart?: string | null;
+  updatedAt?: string;
   leaveEntitlementDays?: number;
   usedLeaveDays?: number;
   pendingLeaveDays?: number;

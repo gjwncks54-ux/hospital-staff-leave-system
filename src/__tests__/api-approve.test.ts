@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   updateLeaveRequestStatus: vi.fn().mockResolvedValue(true),
   getLeaveRequestRowById: vi.fn(),
   insertLeaveRequest: vi.fn().mockResolvedValue(1),
-  listCycleLeaveRows: vi.fn().mockResolvedValue([]),
+  listEmployeeLeaveRows: vi.fn().mockResolvedValue([]),
 }));
 
 const authMocks = vi.hoisted(() => ({
@@ -20,6 +20,7 @@ const authMocks = vi.hoisted(() => ({
     role: "ADMIN" as const,
     joined_at: "2020-01-01",
     leave_adjustment_days: 0,
+    leave_adjustment_cycle_start: null,
     retired_at: null,
     leader_id: null,
     is_active: 1,
@@ -28,6 +29,7 @@ const authMocks = vi.hoisted(() => ({
     team_name: null,
     division_name: null,
     root_name: null,
+    updated_at: "2026-04-23 00:00:00",
   } as import("../../functions/lib/db").EmployeeRecord,
 }));
 
@@ -38,7 +40,7 @@ vi.mock("../../functions/lib/db", async (importOriginal) => {
     updateLeaveRequestStatus: mocks.updateLeaveRequestStatus,
     getLeaveRequestRowById: mocks.getLeaveRequestRowById,
     insertLeaveRequest: mocks.insertLeaveRequest,
-    listCycleLeaveRows: mocks.listCycleLeaveRows,
+    listEmployeeLeaveRows: mocks.listEmployeeLeaveRows,
   };
 });
 
@@ -108,7 +110,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.updateLeaveRequestStatus.mockResolvedValue(true);
   mocks.insertLeaveRequest.mockResolvedValue(1);
-  mocks.listCycleLeaveRows.mockResolvedValue([]);
+  mocks.listEmployeeLeaveRows.mockResolvedValue([]);
 });
 
 describe("Fix 1 regression: super-pass must not stamp approved_leader_id when ADMIN bypasses LEADER stage", () => {

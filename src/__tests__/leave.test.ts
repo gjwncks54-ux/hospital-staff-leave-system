@@ -3,6 +3,7 @@ import {
   buildLeaveSummary,
   calculateLeaveCycle,
   calculateRequestAmount,
+  resolveCumulativeLeaveAdjustment,
 } from "../../functions/lib/leave";
 
 // All dates use KST noon to avoid any boundary issues in tests
@@ -210,6 +211,64 @@ describe("buildLeaveSummary — adjustmentDays", () => {
     const base = buildLeaveSummary(joinedAt, "USER", false, rows, 0, asOf);
     const adjusted = buildLeaveSummary(joinedAt, "USER", false, rows, 5, asOf);
     expect(adjusted.entitlement).toBe(base.entitlement);
+  });
+});
+
+describe("buildLeaveSummary — cumulative accrual", () => {
+  it("carries first-year monthly leave into the first annual grant", () => {
+    const joinedAt = "2025-04-28";
+    const asOf = kst("2026-05-02");
+    const rows = [
+      {
+        type: "ANNUAL" as const,
+        status: "APPROVED_HR" as const,
+        amount: 1,
+        start_date: "2026-05-04",
+        end_date: "2026-05-04",
+        created_at: "2026-04-23 01:00:11",
+      },
+    ];
+
+    const summary = buildLeaveSummary(joinedAt, "USER", true, rows, -5.5, asOf);
+
+    expect(summary.entitlement).toBe(26);
+    expect(summary.used).toBe(1);
+    expect(summary.remaining).toBe(19.5);
+  });
+
+  it("keeps an under-one-year monthly accrual visible after the monthly date", () => {
+    const summary = buildLeaveSummary("2025-07-21", "USER", true, [], -8, kst("2026-05-02"));
+
+    expect(summary.entitlement).toBe(9);
+    expect(summary.remaining).toBe(1);
+  });
+});
+
+describe("resolveCumulativeLeaveAdjustment", () => {
+  it("converts a legacy cycle-based adjustment into a cumulative adjustment", () => {
+    const rows = [
+      {
+        type: "ANNUAL" as const,
+        status: "APPROVED_HR" as const,
+        amount: 1,
+        start_date: "2026-05-07",
+        end_date: "2026-05-07",
+        created_at: "2026-04-23 01:05:10",
+      },
+    ];
+    const adjustment = resolveCumulativeLeaveAdjustment(
+      "2021-04-27",
+      "USER",
+      true,
+      rows,
+      -14,
+      "2026-04-22 23:59:07",
+    );
+    const summary = buildLeaveSummary("2021-04-27", "USER", true, rows, adjustment, kst("2026-05-02"));
+
+    expect(adjustment).toBe(-71);
+    expect(summary.entitlement).toBe(90);
+    expect(summary.remaining).toBe(18);
   });
 });
 

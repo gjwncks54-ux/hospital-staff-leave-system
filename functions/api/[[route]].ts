@@ -16,7 +16,7 @@ import {
   insertEmployeeLeaveAdjustmentLog,
   insertLeaveRequest,
   insertNotice,
-  listCycleLeaveRows,
+  listEmployeeLeaveRows,
   listEmployeesForManagement,
   listHistoryVisibleToActor,
   listNotices,
@@ -30,7 +30,14 @@ import {
   type EmployeeRecord,
   type LeaveStatus,
 } from "../lib/db";
-import { buildLeaveSummary, calculateLeaveCycle, calculateRequestAmount, consumesAnnualBalance } from "../lib/leave";
+import {
+  buildLeaveSummary,
+  calculateRequestAmount,
+  consumesAnnualBalance,
+  convertCumulativeAdjustmentToCycleAdjustment,
+  formatDbTimestamp,
+  resolveCumulativeLeaveAdjustment,
+} from "../lib/leave";
 import { handle } from "hono/cloudflare-pages";
 
 type AppEnv = {
@@ -238,12 +245,20 @@ app.delete("/api/notices/:noticeId", authGuard(["ADMIN", "DIRECTOR"]), async (c)
 type ManagedEmployee = Awaited<ReturnType<typeof listEmployeesForManagement>>[number];
 
 async function attachLeaveSummaryToEmployee(db: D1Database, employee: ManagedEmployee) {
-  const cycle = calculateLeaveCycle(employee.joinedAt);
-  const rows = await listCycleLeaveRows(db, employee.id, cycle.cycleStart, cycle.cycleEnd);
-  const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows, employee.leaveAdjustmentDays);
+  const rows = await listEmployeeLeaveRows(db, employee.id);
+  const effectiveAdjustmentDays = resolveCumulativeLeaveAdjustment(
+    employee.joinedAt,
+    employee.role,
+    employee.leaderId !== null,
+    rows,
+    employee.leaveAdjustmentDays,
+    employee.leaveAdjustmentCycleStart ?? employee.updatedAt,
+  );
+  const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows, effectiveAdjustmentDays);
 
   return {
     ...employee,
+    leaveAdjustmentDays: effectiveAdjustmentDays,
     leaveEntitlementDays: summary.entitlement,
     usedLeaveDays: summary.used,
     pendingLeaveDays: summary.pending,
@@ -266,9 +281,16 @@ app.get("/api/admin/employees/export", authGuard(["ADMIN", "DIRECTOR"]), async (
   const employees = await listEmployeesForManagement(c.env.DB);
   const items = await Promise.all(
     employees.map(async (employee) => {
-      const cycle = calculateLeaveCycle(employee.joinedAt);
-      const rows = await listCycleLeaveRows(c.env.DB, employee.id, cycle.cycleStart, cycle.cycleEnd);
-      const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows, employee.leaveAdjustmentDays);
+      const rows = await listEmployeeLeaveRows(c.env.DB, employee.id);
+      const effectiveAdjustmentDays = resolveCumulativeLeaveAdjustment(
+        employee.joinedAt,
+        employee.role,
+        employee.leaderId !== null,
+        rows,
+        employee.leaveAdjustmentDays,
+        employee.leaveAdjustmentCycleStart ?? employee.updatedAt,
+      );
+      const summary = buildLeaveSummary(employee.joinedAt, employee.role, employee.leaderId !== null, rows, effectiveAdjustmentDays);
 
       return {
         employeeNo: employee.employeeNo,
@@ -398,18 +420,41 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     }
   }
 
-  let nextLeaveAdjustmentDays = body.data.leaveAdjustmentDays;
+  const adjustmentAnchorAt = formatDbTimestamp(new Date());
+  const adjustmentAnchorDate = new Date(`${adjustmentAnchorAt.replace(" ", "T")}Z`);
+  const rows = await listEmployeeLeaveRows(c.env.DB, employeeId);
+  let nextEffectiveAdjustmentDays = body.data.leaveAdjustmentDays;
   if (body.data.targetRemainingDays !== undefined) {
-    const cycle = calculateLeaveCycle(body.data.joinedAt);
-    const rows = await listCycleLeaveRows(c.env.DB, employeeId, cycle.cycleStart, cycle.cycleEnd);
     const summary = buildLeaveSummary(body.data.joinedAt, body.data.role, body.data.leaderId !== null, rows, 0);
-    nextLeaveAdjustmentDays = roundLeaveDays(body.data.targetRemainingDays - (summary.entitlement - summary.used - summary.pending));
+    nextEffectiveAdjustmentDays = roundLeaveDays(body.data.targetRemainingDays - (summary.entitlement - summary.used - summary.pending));
   }
 
-  const adjustmentChanged = (currentEmployee.leave_adjustment_days ?? 0) !== nextLeaveAdjustmentDays;
+  const currentEffectiveAdjustmentDays = resolveCumulativeLeaveAdjustment(
+    currentEmployee.joined_at,
+    currentEmployee.role,
+    currentEmployee.leader_id !== null,
+    rows,
+    currentEmployee.leave_adjustment_days ?? 0,
+    currentEmployee.leave_adjustment_cycle_start ?? currentEmployee.updated_at,
+  );
+  const adjustmentChanged = currentEffectiveAdjustmentDays !== nextEffectiveAdjustmentDays;
   if (adjustmentChanged && !body.data.adjustmentReason?.trim()) {
     return c.json({ message: "연차 조정값을 변경할 때는 사유를 함께 입력해 주세요." }, 400);
   }
+
+  const nextStoredAdjustmentDays = adjustmentChanged
+    ? convertCumulativeAdjustmentToCycleAdjustment(
+        body.data.joinedAt,
+        body.data.role,
+        body.data.leaderId !== null,
+        rows,
+        nextEffectiveAdjustmentDays,
+        adjustmentAnchorDate,
+      )
+    : currentEmployee.leave_adjustment_days ?? 0;
+  const nextAdjustmentAnchorAt = adjustmentChanged
+    ? adjustmentAnchorAt
+    : currentEmployee.leave_adjustment_cycle_start ?? currentEmployee.updated_at ?? null;
 
   let passwordHash: string | null = null;
   if (body.data.password) {
@@ -424,7 +469,8 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     role: body.data.role,
     orgUnitId: body.data.orgUnitId,
     leaderId: body.data.leaderId,
-    leaveAdjustmentDays: nextLeaveAdjustmentDays,
+    leaveAdjustmentDays: nextStoredAdjustmentDays,
+    leaveAdjustmentCycleStart: nextAdjustmentAnchorAt,
     isActive: body.data.isActive,
     passwordHash,
   });
@@ -437,8 +483,8 @@ app.patch("/api/admin/employees/:employeeId", authGuard(["ADMIN", "DIRECTOR"]), 
     await insertEmployeeLeaveAdjustmentLog(c.env.DB, {
       employeeId,
       actorId: actor.id,
-      previousAdjustmentDays: currentEmployee.leave_adjustment_days ?? 0,
-      newAdjustmentDays: nextLeaveAdjustmentDays,
+      previousAdjustmentDays: currentEffectiveAdjustmentDays,
+      newAdjustmentDays: nextEffectiveAdjustmentDays,
       reason: body.data.adjustmentReason?.trim() ?? "",
     });
   }
@@ -463,9 +509,16 @@ app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {
     return c.json({ message: "직원 정보를 찾을 수 없습니다." }, 404);
   }
 
-  const cycle = calculateLeaveCycle(employee.joined_at);
-  const rows = await listCycleLeaveRows(c.env.DB, employeeId, cycle.cycleStart, cycle.cycleEnd);
-  return c.json(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, employee.leave_adjustment_days ?? 0));
+  const rows = await listEmployeeLeaveRows(c.env.DB, employeeId);
+  const effectiveAdjustmentDays = resolveCumulativeLeaveAdjustment(
+    employee.joined_at,
+    employee.role,
+    employee.leader_id !== null,
+    rows,
+    employee.leave_adjustment_days ?? 0,
+    employee.leave_adjustment_cycle_start ?? employee.updated_at,
+  );
+  return c.json(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, effectiveAdjustmentDays));
 });
 
 app.get("/api/leave/history", authGuard(), async (c) => {
@@ -496,14 +549,24 @@ app.post("/api/leave/request", authGuard(), async (c) => {
   }
 
   const amount = calculateRequestAmount(body.data.type, body.data.startDate, body.data.endDate);
-  let cycle: ReturnType<typeof calculateLeaveCycle> | null = null;
+  let balanceStart: string | undefined;
+  let balanceEnd: string | undefined;
   let entitlementForRequest: number | undefined;
 
   if (consumesAnnualBalance(body.data.type)) {
-    cycle = calculateLeaveCycle(employee.joined_at);
-    const rows = await listCycleLeaveRows(c.env.DB, employee.id, cycle.cycleStart, cycle.cycleEnd);
-    const summary = buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, employee.leave_adjustment_days ?? 0);
-    entitlementForRequest = summary.entitlement + (employee.leave_adjustment_days ?? 0);
+    const rows = await listEmployeeLeaveRows(c.env.DB, employee.id);
+    const effectiveAdjustmentDays = resolveCumulativeLeaveAdjustment(
+      employee.joined_at,
+      employee.role,
+      employee.leader_id !== null,
+      rows,
+      employee.leave_adjustment_days ?? 0,
+      employee.leave_adjustment_cycle_start ?? employee.updated_at,
+    );
+    const summary = buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, effectiveAdjustmentDays);
+    entitlementForRequest = summary.entitlement + effectiveAdjustmentDays;
+    balanceStart = employee.joined_at;
+    balanceEnd = "9999-12-31";
     if (summary.remaining < amount) {
       return c.json({ message: "잔여 연차가 부족합니다." }, 400);
     }
@@ -520,8 +583,8 @@ app.post("/api/leave/request", authGuard(), async (c) => {
     requesterRole: employee.role,
     requesterHasLeader: employee.leader_id !== null ? 1 : 0,
     requesterLeaderId: employee.leader_id,
-    cycleStart: cycle?.cycleStart,
-    cycleEnd: cycle?.cycleEnd,
+    cycleStart: balanceStart,
+    cycleEnd: balanceEnd,
     entitlement: entitlementForRequest,
   });
 

@@ -6,6 +6,9 @@
   font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   color: #173542;
   background: #eef7f4;
+  --app-background: #eef7f4;
+  --form-control-background: #f7fbf9;
+  --form-control-text: #183933;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -24,6 +27,7 @@ body,
 
 body {
   margin: 0;
+  background: var(--app-background);
 }
 
 button,
@@ -31,6 +35,38 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not(:disabled),
+select:not(:disabled),
+textarea:not(:disabled) {
+  background-color: var(--form-control-background);
+  color: var(--form-control-text);
+  color-scheme: light;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not(:disabled):focus,
+input:not([type="checkbox"]):not([type="radio"]):not(:disabled):active,
+select:not(:disabled):focus,
+select:not(:disabled):active,
+textarea:not(:disabled):focus,
+textarea:not(:disabled):active {
+  background-color: var(--form-control-background);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+select:-webkit-autofill,
+select:-webkit-autofill:hover,
+select:-webkit-autofill:focus {
+  caret-color: var(--form-control-text);
+  -webkit-text-fill-color: var(--form-control-text);
+  -webkit-box-shadow: 0 0 0 1000px var(--form-control-background) inset;
+  box-shadow: 0 0 0 1000px var(--form-control-background) inset;
 }
 
 textarea {

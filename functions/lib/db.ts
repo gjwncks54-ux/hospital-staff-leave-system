@@ -12,6 +12,7 @@ export interface EmployeeRecord {
   email: string;
   joined_at: string;
   leave_adjustment_days: number;
+  leave_adjustment_cycle_start: string | null;
   retired_at: string | null;
   role: UserRole;
   password_hash: string;
@@ -21,6 +22,7 @@ export interface EmployeeRecord {
   team_name: string | null;
   division_name: string | null;
   root_name: string | null;
+  updated_at: string;
 }
 
 export interface LeaveRow {
@@ -63,6 +65,7 @@ interface ManagedEmployeeRow {
   email: string;
   joined_at: string;
   leave_adjustment_days: number;
+  leave_adjustment_cycle_start: string | null;
   retired_at: string | null;
   role: UserRole;
   is_active: number;
@@ -72,6 +75,7 @@ interface ManagedEmployeeRow {
   grand_name: string | null;
   leader_id: number | null;
   leader_name: string | null;
+  updated_at: string;
 }
 
 interface OrgUnitRow {
@@ -208,7 +212,7 @@ export async function listCycleLeaveRows(db: D1Database, employeeId: number, cyc
   const result = await db
     .prepare(
       `
-        SELECT type, status, amount, start_date, end_date
+        SELECT type, status, amount, start_date, end_date, created_at
         FROM leave_requests
         WHERE emp_id = ?
           AND date(end_date) >= date(?)
@@ -217,7 +221,23 @@ export async function listCycleLeaveRows(db: D1Database, employeeId: number, cyc
       `,
     )
     .bind(employeeId, cycleStart, cycleEnd)
-    .all<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string }>();
+    .all<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string; created_at: string }>();
+
+  return result.results;
+}
+
+export async function listEmployeeLeaveRows(db: D1Database, employeeId: number) {
+  const result = await db
+    .prepare(
+      `
+        SELECT type, status, amount, start_date, end_date, created_at
+        FROM leave_requests
+        WHERE emp_id = ?
+        ORDER BY start_date DESC
+      `,
+    )
+    .bind(employeeId)
+    .all<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string; created_at: string }>();
 
   return result.results;
 }
@@ -251,10 +271,12 @@ export async function listEmployeesForManagement(db: D1Database) {
           e.email,
           e.joined_at,
           e.leave_adjustment_days,
+          e.leave_adjustment_cycle_start,
           e.retired_at,
           e.role,
           e.is_active,
           e.org_unit_id,
+          e.updated_at,
           unit.name AS unit_name,
           parent.name AS parent_name,
           grand.name AS grand_name,
@@ -311,6 +333,7 @@ export async function updateEmployeeForManagement(
     orgUnitId: number | null;
     leaderId: number | null;
     leaveAdjustmentDays: number;
+    leaveAdjustmentCycleStart: string | null;
     isActive: boolean;
     passwordHash?: string | null;
   },
@@ -326,6 +349,7 @@ export async function updateEmployeeForManagement(
           org_unit_id = ?,
           leader_id = ?,
           leave_adjustment_days = ?,
+          leave_adjustment_cycle_start = ?,
           password_hash = COALESCE(?, password_hash),
           is_active = ?,
           updated_at = CURRENT_TIMESTAMP
@@ -339,6 +363,7 @@ export async function updateEmployeeForManagement(
       input.orgUnitId,
       input.leaderId,
       input.leaveAdjustmentDays,
+      input.leaveAdjustmentCycleStart,
       input.passwordHash ?? null,
       input.isActive ? 1 : 0,
       input.employeeId,
@@ -747,10 +772,12 @@ export async function getManagedEmployeeById(db: D1Database, employeeId: number)
           e.email,
           e.joined_at,
           e.leave_adjustment_days,
+          e.leave_adjustment_cycle_start,
           e.retired_at,
           e.role,
           e.is_active,
           e.org_unit_id,
+          e.updated_at,
           unit.name AS unit_name,
           parent.name AS parent_name,
           grand.name AS grand_name,
@@ -835,6 +862,8 @@ function toManagedEmployeeItem(row: ManagedEmployeeRow): ManagedEmployeeItem {
     role: row.role,
     joinedAt: row.joined_at,
     leaveAdjustmentDays: row.leave_adjustment_days ?? 0,
+    leaveAdjustmentCycleStart: row.leave_adjustment_cycle_start,
+    updatedAt: row.updated_at,
     retiredAt: row.retired_at,
     isActive: row.is_active === 1,
     orgUnitId: row.org_unit_id,

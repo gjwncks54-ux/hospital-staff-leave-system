@@ -22,6 +22,18 @@ function formatKstDate(date: Date) {
   return new Date(date.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+export function formatDbTimestamp(date: Date) {
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function parseDbTimestamp(value: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return parseDate(value);
+  }
+
+  return new Date(`${value.replace(" ", "T")}Z`);
+}
+
 function addDays(date: Date, days: number) {
   const next = new Date(date);
   next.setUTCDate(next.getUTCDate() + days);
@@ -42,6 +54,10 @@ function addMonthsClamped(joinedAtStr: string, months: number): Date {
 
 function addYearsClamped(joinedAtStr: string, years: number): Date {
   return addMonthsClamped(joinedAtStr, years * 12);
+}
+
+function annualGrantForServiceYears(serviceYears: number) {
+  return Math.min(15 + Math.floor((serviceYears - 1) / 2), 25);
 }
 
 function overlapsRange(rowStartDate: string, rowEndDate: string, periodStart: Date, periodEndExclusive: Date) {
@@ -90,7 +106,7 @@ export function calculateLeaveCycle(joinedAt: string, asOf = new Date()) {
     cycleStart: formatDate(cycleStart),
     cycleEnd: formatDate(cycleEnd),
     serviceYears,
-    entitlement: Math.min(15 + Math.floor((serviceYears - 1) / 2), 25),
+    entitlement: annualGrantForServiceYears(serviceYears),
   };
 }
 
@@ -114,8 +130,7 @@ export function consumesAnnualBalance(type: LeaveType) {
 
 function calculateUnderOneYearEntitlement(
   joinedAt: string,
-  finalStatus: LeaveStatus,
-  rows: Array<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string }>,
+  rows: LeaveBalanceRow[],
   asOf: Date,
 ) {
   const completedMonths = completedMonthsUnderOneYear(joinedAt, formatKstDate(asOf));
@@ -138,15 +153,47 @@ function calculateUnderOneYearEntitlement(
   return entitlement;
 }
 
-export function buildLeaveSummary(
-  joinedAt: string,
+type LeaveBalanceRow = {
+  type: LeaveType;
+  status: LeaveStatus;
+  amount: number;
+  start_date: string;
+  end_date: string;
+  created_at?: string | null;
+};
+
+function getRowsCreatedOnOrBefore(rows: LeaveBalanceRow[], asOf: Date) {
+  return rows.filter((row) => !row.created_at || parseDbTimestamp(row.created_at).getTime() <= asOf.getTime());
+}
+
+function getRowsInCurrentCycle(joinedAt: string, rows: LeaveBalanceRow[], asOf: Date) {
+  const cycle = calculateLeaveCycle(joinedAt, asOf);
+  const cycleStart = parseDate(cycle.cycleStart);
+  const cycleEnd = parseDate(cycle.cycleEnd);
+  return rows.filter((row) => overlapsRange(row.start_date, row.end_date, cycleStart, cycleEnd));
+}
+
+function calculateCumulativeEntitlement(joinedAt: string, rows: LeaveBalanceRow[], asOf: Date) {
+  const asOfDate = formatKstDate(asOf);
+  const serviceYears = fullYearsBetween(joinedAt, asOfDate);
+
+  if (serviceYears < 1) {
+    return calculateUnderOneYearEntitlement(joinedAt, rows, asOf);
+  }
+
+  let entitlement = calculateUnderOneYearEntitlement(joinedAt, rows, addYearsClamped(joinedAt, 1));
+  for (let years = 1; years <= serviceYears; years += 1) {
+    entitlement += annualGrantForServiceYears(years);
+  }
+
+  return entitlement;
+}
+
+function buildConsumedLeaveTotals(
   role: UserRole,
   hasLeader: boolean,
-  rows: Array<{ type: LeaveType; status: LeaveStatus; amount: number; start_date: string; end_date: string }>,
-  adjustmentDays = 0,
-  asOf = new Date(),
+  rows: LeaveBalanceRow[],
 ) {
-  const cycle = calculateLeaveCycle(joinedAt, asOf);
   const stages = getApprovalStages(role, hasLeader);
   const finalStatus = getStatusAfterStage(stages[stages.length - 1]);
   let used = 0;
@@ -164,8 +211,74 @@ export function buildLeaveSummary(
     }
   }
 
+  return { used, pending };
+}
+
+function buildCurrentCycleBaseSummary(
+  joinedAt: string,
+  role: UserRole,
+  hasLeader: boolean,
+  rows: LeaveBalanceRow[],
+  asOf: Date,
+) {
+  const cycle = calculateLeaveCycle(joinedAt, asOf);
+  const cycleRows = getRowsInCurrentCycle(joinedAt, rows, asOf);
+  const { used, pending } = buildConsumedLeaveTotals(role, hasLeader, cycleRows);
   const entitlement =
-    cycle.serviceYears < 1 ? calculateUnderOneYearEntitlement(joinedAt, finalStatus, rows, asOf) : cycle.entitlement;
+    cycle.serviceYears < 1 ? calculateUnderOneYearEntitlement(joinedAt, cycleRows, asOf) : cycle.entitlement;
+
+  return { entitlement, used, pending };
+}
+
+function getBaseRemaining(summary: { entitlement: number; used: number; pending: number }) {
+  return summary.entitlement - summary.used - summary.pending;
+}
+
+function roundLeaveDays(value: number) {
+  return Number(value.toFixed(1));
+}
+
+export function resolveCumulativeLeaveAdjustment(
+  joinedAt: string,
+  role: UserRole,
+  hasLeader: boolean,
+  rows: LeaveBalanceRow[],
+  cycleAdjustmentDays: number,
+  adjustmentAnchorAt?: string | null,
+) {
+  const anchorDate = adjustmentAnchorAt ? parseDbTimestamp(adjustmentAnchorAt) : new Date();
+  const anchorRows = getRowsCreatedOnOrBefore(rows, anchorDate);
+  const cumulativeBase = getBaseRemaining(buildLeaveSummary(joinedAt, role, hasLeader, anchorRows, 0, anchorDate));
+  const cycleBase = getBaseRemaining(buildCurrentCycleBaseSummary(joinedAt, role, hasLeader, anchorRows, anchorDate));
+
+  return roundLeaveDays(cycleAdjustmentDays + cycleBase - cumulativeBase);
+}
+
+export function convertCumulativeAdjustmentToCycleAdjustment(
+  joinedAt: string,
+  role: UserRole,
+  hasLeader: boolean,
+  rows: LeaveBalanceRow[],
+  cumulativeAdjustmentDays: number,
+  asOf = new Date(),
+) {
+  const cumulativeBase = getBaseRemaining(buildLeaveSummary(joinedAt, role, hasLeader, rows, 0, asOf));
+  const cycleBase = getBaseRemaining(buildCurrentCycleBaseSummary(joinedAt, role, hasLeader, rows, asOf));
+
+  return roundLeaveDays(cumulativeAdjustmentDays + cumulativeBase - cycleBase);
+}
+
+export function buildLeaveSummary(
+  joinedAt: string,
+  role: UserRole,
+  hasLeader: boolean,
+  rows: LeaveBalanceRow[],
+  adjustmentDays = 0,
+  asOf = new Date(),
+) {
+  const cycle = calculateLeaveCycle(joinedAt, asOf);
+  const { used, pending } = buildConsumedLeaveTotals(role, hasLeader, rows);
+  const entitlement = calculateCumulativeEntitlement(joinedAt, rows, asOf);
   const remaining = Math.max(0, entitlement + adjustmentDays - used - pending);
 
   const summary: LeaveSummary = {

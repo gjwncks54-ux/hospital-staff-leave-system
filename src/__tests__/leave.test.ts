@@ -232,7 +232,8 @@ describe("buildLeaveSummary — cumulative accrual", () => {
     const summary = buildLeaveSummary(joinedAt, "USER", true, rows, -5.5, asOf);
 
     expect(summary.entitlement).toBe(26);
-    expect(summary.used).toBe(1);
+    expect(summary.used).toBe(0);
+    expect(summary.pending).toBe(1);
     expect(summary.remaining).toBe(19.5);
   });
 
@@ -281,6 +282,28 @@ describe("buildLeaveSummary — pending vs used leave", () => {
     ];
     const summary = buildLeaveSummary(joinedAt, "USER", false, rows, 0, asOf);
     expect(summary.used).toBe(5);
+    expect(summary.pending).toBe(0);
+  });
+
+  it("approved future leave counts as pending until the start date", () => {
+    const joinedAt = "2020-01-01";
+    const asOf = kst("2025-06-01");
+    const rows = [
+      { type: "ANNUAL" as const, status: "APPROVED_HR" as const, amount: 2, start_date: "2025-06-10", end_date: "2025-06-11" },
+    ];
+    const summary = buildLeaveSummary(joinedAt, "USER", false, rows, 0, asOf);
+    expect(summary.used).toBe(0);
+    expect(summary.pending).toBe(2);
+  });
+
+  it("approved leave counts as used on its start date", () => {
+    const joinedAt = "2020-01-01";
+    const asOf = kst("2025-06-10");
+    const rows = [
+      { type: "ANNUAL" as const, status: "APPROVED_HR" as const, amount: 2, start_date: "2025-06-10", end_date: "2025-06-11" },
+    ];
+    const summary = buildLeaveSummary(joinedAt, "USER", false, rows, 0, asOf);
+    expect(summary.used).toBe(2);
     expect(summary.pending).toBe(0);
   });
 

@@ -38,6 +38,7 @@ import {
   formatDbTimestamp,
   resolveCumulativeLeaveAdjustment,
 } from "../lib/leave";
+import type { LeaveSummary } from "../../src/types";
 import { handle } from "hono/cloudflare-pages";
 
 type AppEnv = {
@@ -243,6 +244,13 @@ app.delete("/api/notices/:noticeId", authGuard(["ADMIN", "DIRECTOR"]), async (c)
 });
 
 type ManagedEmployee = Awaited<ReturnType<typeof listEmployeesForManagement>>[number];
+
+function toClientLeaveSummary(summary: LeaveSummary): LeaveSummary {
+  return {
+    ...summary,
+    used: roundLeaveDays(summary.entitlement - summary.pending - summary.remaining),
+  };
+}
 
 async function attachLeaveSummaryToEmployee(db: D1Database, employee: ManagedEmployee) {
   const rows = await listEmployeeLeaveRows(db, employee.id);
@@ -518,7 +526,7 @@ app.get("/api/leave/balance/:employeeId", authGuard(), async (c) => {
     employee.leave_adjustment_days ?? 0,
     employee.leave_adjustment_cycle_start ?? employee.updated_at,
   );
-  return c.json(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, effectiveAdjustmentDays));
+  return c.json(toClientLeaveSummary(buildLeaveSummary(employee.joined_at, employee.role, employee.leader_id !== null, rows, effectiveAdjustmentDays)));
 });
 
 app.get("/api/leave/history", authGuard(), async (c) => {

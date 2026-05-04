@@ -193,9 +193,11 @@ function buildConsumedLeaveTotals(
   role: UserRole,
   hasLeader: boolean,
   rows: LeaveBalanceRow[],
+  asOf: Date,
 ) {
   const stages = getApprovalStages(role, hasLeader);
   const finalStatus = getStatusAfterStage(stages[stages.length - 1]);
+  const asOfDate = formatKstDate(asOf);
   let used = 0;
   let pending = 0;
 
@@ -204,7 +206,7 @@ function buildConsumedLeaveTotals(
       continue;
     }
 
-    if (row.status === finalStatus) {
+    if (row.status === finalStatus && row.start_date <= asOfDate) {
       used += row.amount;
     } else {
       pending += row.amount;
@@ -223,7 +225,7 @@ function buildCurrentCycleBaseSummary(
 ) {
   const cycle = calculateLeaveCycle(joinedAt, asOf);
   const cycleRows = getRowsInCurrentCycle(joinedAt, rows, asOf);
-  const { used, pending } = buildConsumedLeaveTotals(role, hasLeader, cycleRows);
+  const { used, pending } = buildConsumedLeaveTotals(role, hasLeader, cycleRows, asOf);
   const entitlement =
     cycle.serviceYears < 1 ? calculateUnderOneYearEntitlement(joinedAt, cycleRows, asOf) : cycle.entitlement;
 
@@ -277,7 +279,7 @@ export function buildLeaveSummary(
   asOf = new Date(),
 ) {
   const cycle = calculateLeaveCycle(joinedAt, asOf);
-  const { used, pending } = buildConsumedLeaveTotals(role, hasLeader, rows);
+  const { used, pending } = buildConsumedLeaveTotals(role, hasLeader, rows, asOf);
   const entitlement = calculateCumulativeEntitlement(joinedAt, rows, asOf);
   const remaining = Math.max(0, entitlement + adjustmentDays - used - pending);
 

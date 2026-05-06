@@ -370,34 +370,6 @@ const EmptyState = ({ label }: { label: string }) => (
   <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-white/88 px-4 py-8 text-center text-sm text-slate-500">{label}</div>
 );
 
-const dicePipLayouts: Record<number, string[]> = {
-  1: ["left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"],
-  2: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  3: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  4: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[30%] top-[70%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  5: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[30%] top-[70%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  6: ["left-[30%] top-[28%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[28%] -translate-x-1/2 -translate-y-1/2", "left-[30%] top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[70%] top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[30%] top-[72%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[72%] -translate-x-1/2 -translate-y-1/2"],
-};
-
-function DicePips({ value }: { value: number | null }) {
-  const activeValue = value && value >= 1 && value <= 6 ? value : 1;
-  const muted = value === null;
-
-  return (
-    <div className="absolute inset-0">
-      {dicePipLayouts[activeValue].map((position, index) => (
-        <motion.span
-          key={`${activeValue}-${index}`}
-          className={`absolute h-4 w-4 rounded-full shadow-sm ${position} ${muted ? "bg-slate-300" : "bg-brand-slate"}`}
-          initial={{ scale: 0.55, opacity: 0.35 }}
-          animate={{ scale: 1, opacity: muted ? 0.45 : 1 }}
-          transition={{ type: "spring", stiffness: 520, damping: 18, delay: index * 0.025 }}
-        />
-      ))}
-    </div>
-  );
-}
-
 function DiceFace({
   value,
   rolling,
@@ -407,19 +379,18 @@ function DiceFace({
 }) {
   return (
     <motion.div
-      className="relative flex aspect-square h-24 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-white via-white to-rose-50 shadow-lg shadow-rose-100 ring-1 ring-rose-200"
+      className="relative flex aspect-square h-24 items-center justify-center overflow-hidden rounded-xl bg-white text-[3.2rem] font-semibold leading-none text-rose-500 shadow-lg shadow-rose-100 ring-1 ring-rose-100"
       animate={rolling ? { rotate: [0, -18, 20, -14, 12, 0], y: [0, -18, 8, -10, 3, 0], scale: [1, 1.12, 0.94, 1.08, 0.98, 1] } : { rotate: 0, y: 0, scale: 1 }}
       transition={rolling ? { duration: 0.48, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" } : { type: "spring", stiffness: 260, damping: 15 }}
     >
-      <motion.div
+      <motion.span
         key={value ?? "empty"}
-        className="absolute inset-0"
         initial={{ y: rolling ? -18 : 0, opacity: rolling ? 0.45 : 1, scale: rolling ? 0.82 : 1 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
         transition={{ type: "spring", stiffness: 520, damping: 18 }}
       >
-        <DicePips value={value} />
-      </motion.div>
+        {value ?? "?"}
+      </motion.span>
     </motion.div>
   );
 }
@@ -443,9 +414,6 @@ function DiceGameCard({
   const displayValue = rollValue ?? status?.lastRollValue ?? null;
   const hasRolledToday = Boolean(status && status.rolledToday > 0);
   const buttonLabel = rolling ? "굴리는 중..." : hasRolledToday && status?.canRoll ? `다시 굴리기 (${status.rollsRemaining}회)` : "굴리기";
-  const buttonClassName = canRoll
-    ? "bg-rose-500 text-white shadow-lg shadow-rose-200 hover:translate-y-px"
-    : "bg-white text-brand-slate ring-1 ring-brand-slate/15 shadow-md shadow-slate-200/80";
 
   return (
     <section className="rounded-xl border border-white/80 bg-white/92 p-4 shadow-card">
@@ -484,7 +452,7 @@ function DiceGameCard({
           </div>
           <button
             type="button"
-            className={`rounded-xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed ${buttonClassName}`}
+            className="rounded-xl bg-rose-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:translate-y-px disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
             disabled={!canRoll}
             onClick={onRoll}
           >

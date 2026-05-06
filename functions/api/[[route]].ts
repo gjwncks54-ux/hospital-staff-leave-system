@@ -38,6 +38,12 @@ import {
   formatDbTimestamp,
   resolveCumulativeLeaveAdjustment,
 } from "../lib/leave";
+import {
+  getDiceRankingForEmployee,
+  getDiceStatusForEmployee,
+  grantDiceBonus,
+  rollDiceForEmployee,
+} from "../lib/dice";
 import type { LeaveSummary } from "../../src/types";
 import { handle } from "hono/cloudflare-pages";
 
@@ -83,6 +89,11 @@ const approvalSchema = z.object({
 const noticeSchema = z.object({
   title: z.string().trim().min(2).max(80),
   content: z.string().trim().min(2).max(1000),
+});
+
+const diceGrantSchema = z.object({
+  employeeNo: z.string().trim().min(4).max(32),
+  reason: z.string().trim().min(2).max(120).default("원스텝 참여 보너스"),
 });
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -241,6 +252,52 @@ app.delete("/api/notices/:noticeId", authGuard(["ADMIN", "DIRECTOR"]), async (c)
   }
 
   return c.json({ ok: true });
+});
+
+app.get("/api/dice/status", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  return c.json(await getDiceStatusForEmployee(c.env.DB, actor.employee_no));
+});
+
+app.post("/api/dice/roll", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  const result = await rollDiceForEmployee(c.env.DB, actor.employee_no);
+
+  if (!result.rolled) {
+    return c.json({ message: "오늘 참여 가능한 주사위 횟수가 없습니다.", status: result.status }, 409);
+  }
+
+  return c.json({
+    rollValue: result.rollValue,
+    rollKind: result.rollKind,
+    bonusId: result.bonusId,
+    status: result.status,
+  });
+});
+
+app.get("/api/dice/ranking", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  return c.json(await getDiceRankingForEmployee(c.env.DB, actor.employee_no));
+});
+
+app.post("/api/admin/dice/grant", authGuard(["ADMIN"]), async (c) => {
+  const actor = c.get("employee");
+  if (actor.role !== "ADMIN") {
+    return c.json({ message: "관리자만 원스텝 보너스를 지급할 수 있습니다." }, 403);
+  }
+
+  const body = diceGrantSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) {
+    return c.json({ message: "보너스 지급 정보를 다시 확인해 주세요." }, 400);
+  }
+
+  const employee = await getEmployeeByEmployeeNo(c.env.DB, body.data.employeeNo);
+  if (!employee || employee.is_active !== 1) {
+    return c.json({ message: "활성 직원 정보를 찾을 수 없습니다." }, 404);
+  }
+
+  const id = await grantDiceBonus(c.env.DB, employee.employee_no, body.data.reason);
+  return c.json({ ok: true, id });
 });
 
 type ManagedEmployee = Awaited<ReturnType<typeof listEmployeesForManagement>>[number];

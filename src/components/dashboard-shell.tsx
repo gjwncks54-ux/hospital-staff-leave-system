@@ -1,4 +1,5 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import {
   getApprovalStages,
   getApprovedStage,
@@ -8,12 +9,12 @@ import {
   isFinalApprovedStatus,
   isInFlightStatus,
 } from "../lib/approval-flow";
-import { ApiError, fetchEmployeeLeaveExport } from "../lib/api";
+import { ApiError, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rollDice } from "../lib/api";
 import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
 import { useLeaveStore } from "../stores/leave-store";
-import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveSummary, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser, UserRole } from "../types";
+import type { ApprovalActionInput, DiceRankingResponse, DiceStatus, EmployeeCreateInput, LeaveRequestItem, LeaveSummary, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser, UserRole } from "../types";
 
 type TabKey = "home" | "history" | "approvals" | "people" | "profile";
 type HistoryFilterKey = "ALL" | "IN_FLIGHT" | "APPROVED" | "REJECTED";
@@ -368,6 +369,105 @@ const EmptyState = ({ label }: { label: string }) => (
   <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-white/88 px-4 py-8 text-center text-sm text-slate-500">{label}</div>
 );
 
+function DiceFace({
+  value,
+  rolling,
+  animationKey,
+}: {
+  value: number | null;
+  rolling: boolean;
+  animationKey: number;
+}) {
+  return (
+    <motion.div
+      key={animationKey}
+      className="flex aspect-square h-24 items-center justify-center rounded-xl bg-white text-[3.2rem] font-semibold leading-none text-rose-500 shadow-lg shadow-rose-100 ring-1 ring-rose-100"
+      animate={rolling ? { rotate: [0, -12, 16, -8, 0], y: [0, -12, 4, -6, 0], scale: [1, 1.08, 0.96, 1.03, 1] } : { rotate: 0, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 340, damping: 13 }}
+    >
+      {value ?? "?"}
+    </motion.div>
+  );
+}
+
+function DiceGameCard({
+  status,
+  ranking,
+  rolling,
+  rollValue,
+  animationKey,
+  error,
+  onRoll,
+}: {
+  status: DiceStatus | null;
+  ranking: DiceRankingResponse | null;
+  rolling: boolean;
+  rollValue: number | null;
+  animationKey: number;
+  error: string | null;
+  onRoll: () => void;
+}) {
+  const canRoll = Boolean(status?.canRoll) && !rolling;
+  const displayValue = rollValue ?? status?.lastRollValue ?? null;
+
+  return (
+    <section className="rounded-xl border border-white/80 bg-white/92 p-4 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-400">Today Dice</p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">오늘의 주사위</h2>
+          <p className="mt-1 text-sm text-slate-500">남은 기회 {status ? status.rollsRemaining : "--"}회 · 보너스 {status ? status.bonusAvailable : "--"}회</p>
+        </div>
+        <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-500">{ranking?.month ?? "이번 달"}</span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-[6rem_minmax(0,1fr)] gap-4">
+        <DiceFace value={displayValue} rolling={rolling} animationKey={animationKey} />
+        <div className="flex min-w-0 flex-col justify-between gap-3">
+          <div className="rounded-xl bg-rose-50/70 px-3 py-2 text-sm text-slate-600">
+            <span className="font-semibold text-rose-500">내 순위</span>
+            <span className="ml-2">
+              {ranking?.me.rank ? `${ranking.me.rank}위 · ${ranking.me.score}점` : "아직 기록 없음"}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="rounded-xl bg-rose-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-200 transition hover:translate-y-px disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+            disabled={!canRoll}
+            onClick={onRoll}
+          >
+            {rolling ? "굴리는 중..." : status?.canRoll ? "오늘의 주사위 굴리기" : "오늘 참여 완료"}
+          </button>
+        </div>
+      </div>
+
+      {error ? <div className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-600">{error}</div> : null}
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-ink">이번 달 랭킹 TOP 3</h3>
+          <span className="text-xs font-semibold text-slate-400">{ranking ? `${ranking.totalParticipants}명 참여` : "집계 중"}</span>
+        </div>
+        <div className="mt-3 space-y-2">
+          {ranking?.top.length ? (
+            ranking.top.map((item) => (
+              <div key={item.employeeNo} className="flex items-center justify-between gap-3 rounded-xl bg-sky-50/70 px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <span className="font-semibold text-sky-700">{item.rank}위 {item.employeeName}</span>
+                  <span className="ml-2 text-xs text-slate-500">{item.teamName}</span>
+                </div>
+                <span className="shrink-0 font-semibold text-ink">{item.score}점</span>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-rose-100 px-3 py-4 text-center text-sm text-slate-500">이번 달 기록이 아직 없습니다.</div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function employeeSearchText(item: ManagedEmployeeItem) {
   return [item.name, item.employeeNo, item.email, roleLabel(item.role), item.teamName, item.leaderName ?? "", formatOrgPath(item.orgPath), employeeStatusLabel(item)]
     .join(" ")
@@ -377,9 +477,13 @@ function employeeSearchText(item: ManagedEmployeeItem) {
 function EmployeeRow({
   item,
   onEdit,
+  onGrantDiceBonus,
+  diceBonusGranting,
 }: {
   item: ManagedEmployeeItem;
   onEdit: (item: ManagedEmployeeItem) => void;
+  onGrantDiceBonus?: (item: ManagedEmployeeItem) => void;
+  diceBonusGranting?: boolean;
 }) {
   return (
     <article className="rounded-[1.6rem] border border-white/70 bg-white/92 p-4 shadow-card">
@@ -402,9 +506,21 @@ function EmployeeRow({
             {!item.isActive && item.retiredAt ? <p>퇴사일 · {item.retiredAt}</p> : null}
           </div>
         </div>
-        <button type="button" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600" onClick={() => onEdit(item)}>
-          수정
-        </button>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <button type="button" className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600" onClick={() => onEdit(item)}>
+            수정
+          </button>
+          {onGrantDiceBonus ? (
+            <button
+              type="button"
+              className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={diceBonusGranting || !item.isActive}
+              onClick={() => onGrantDiceBonus(item)}
+            >
+              {diceBonusGranting ? "지급 중" : "원스텝 +1"}
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="mt-4 flex justify-end">
         <span className="rounded-full bg-mint/12 px-3 py-1.5 text-sm font-bold text-mint">
@@ -476,6 +592,25 @@ export function DashboardShell() {
   const [employeeOriginalAdjustment, setEmployeeOriginalAdjustment] = useState(0);
   const [employeeBaseRemainingDays, setEmployeeBaseRemainingDays] = useState(0);
   const [employeeOriginalRemainingDays, setEmployeeOriginalRemainingDays] = useState(0);
+  const [diceStatus, setDiceStatus] = useState<DiceStatus | null>(null);
+  const [diceRanking, setDiceRanking] = useState<DiceRankingResponse | null>(null);
+  const [diceRollValue, setDiceRollValue] = useState<number | null>(null);
+  const [diceRolling, setDiceRolling] = useState(false);
+  const [diceAnimationKey, setDiceAnimationKey] = useState(0);
+  const [diceError, setDiceError] = useState<string | null>(null);
+  const [diceBonusGrantingNo, setDiceBonusGrantingNo] = useState<string | null>(null);
+
+  const loadDiceData = useCallback(async () => {
+    try {
+      const [status, ranking] = await Promise.all([fetchDiceStatus(), fetchDiceRanking()]);
+      setDiceStatus(status);
+      setDiceRanking(ranking);
+      setDiceError(null);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "주사위 정보를 불러오지 못했습니다.";
+      setDiceError(message);
+    }
+  }, []);
 
   function openHistoryTab() {
     setHistorySearch("");
@@ -505,12 +640,17 @@ export function DashboardShell() {
   }, [refresh, user.id, user.role]);
 
   useEffect(() => {
+    void loadDiceData();
+  }, [loadDiceData]);
+
+  useEffect(() => {
     const sync = () => {
       if (document.visibilityState === "hidden" || submitting || postingNotice) return;
       const now = Date.now();
       if (now - lastRefreshRef.current < AUTO_REFRESH_THROTTLE_MS) return;
       lastRefreshRef.current = now;
       void refresh(user.id, user.role);
+      void loadDiceData();
     };
     const onVisible = () => document.visibilityState === "visible" && sync();
     window.addEventListener("focus", sync);
@@ -519,7 +659,7 @@ export function DashboardShell() {
       window.removeEventListener("focus", sync);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [postingNotice, refresh, submitting, user.id, user.role]);
+  }, [loadDiceData, postingNotice, refresh, submitting, user.id, user.role]);
 
   useEffect(() => {
     if (activeTab !== "approvals" || !canApprove(user.role)) return;
@@ -843,6 +983,47 @@ export function DashboardShell() {
     }
   }
 
+  async function handleDiceRoll() {
+    if (diceRolling || !diceStatus?.canRoll) return;
+    setDiceRolling(true);
+    setDiceError(null);
+    setDiceAnimationKey((current) => current + 1);
+
+    try {
+      const response = await rollDice();
+      setDiceRollValue(response.rollValue);
+      setDiceStatus(response.status);
+      setToast(response.rollKind === "BONUS" ? `보너스 주사위 ${response.rollValue}점이 기록되었습니다.` : `오늘의 주사위 ${response.rollValue}점이 기록되었습니다.`);
+      const ranking = await fetchDiceRanking();
+      setDiceRanking(ranking);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "주사위를 굴리지 못했습니다.";
+      setDiceError(message);
+      setToast(message);
+      await loadDiceData();
+    } finally {
+      setDiceRolling(false);
+    }
+  }
+
+  async function handleGrantDiceBonus(item: ManagedEmployeeItem) {
+    if (user.role !== "ADMIN" || diceBonusGrantingNo) return;
+    setDiceBonusGrantingNo(item.employeeNo);
+
+    try {
+      await grantDiceBonus({ employeeNo: item.employeeNo, reason: "원스텝 참여 보너스" });
+      setToast(`${item.name}님에게 원스텝 보너스 1회를 지급했습니다.`);
+      if (item.employeeNo === user.employeeNo) {
+        await loadDiceData();
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "보너스 지급에 실패했습니다.";
+      setToast(message);
+    } finally {
+      setDiceBonusGrantingNo(null);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-backdrop px-4 py-5 text-ink sm:px-6">
       <div className="mx-auto max-w-[430px] pb-28">
@@ -910,6 +1091,16 @@ export function DashboardShell() {
                 <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">예정</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.pending) : "--"}</p></div>
               </div>
             </article>
+
+            <DiceGameCard
+              status={diceStatus}
+              ranking={diceRanking}
+              rolling={diceRolling}
+              rollValue={diceRollValue}
+              animationKey={diceAnimationKey}
+              error={diceError}
+              onRoll={() => void handleDiceRoll()}
+            />
 
             <section className="rounded-[1.8rem] border border-white/70 bg-white/90 p-4 shadow-card">
               <div className="grid grid-cols-2 gap-3">
@@ -1149,6 +1340,18 @@ export function DashboardShell() {
               </div>
             </article>
 
+            {user.role === "ADMIN" ? (
+              <article className="rounded-xl border border-rose-100 bg-rose-50/80 p-4 shadow-card">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-base font-semibold tracking-tight text-ink">원스텝 보너스</h2>
+                    <p className="mt-1 text-sm text-slate-500">직원 카드의 원스텝 +1 버튼으로 오늘의 주사위 보너스를 지급합니다.</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-white px-3 py-1 text-xs font-semibold text-rose-500">Admin</span>
+                </div>
+              </article>
+            ) : null}
+
             {employeeEditorOpen ? (
               <article className="rounded-[1.8rem] border border-white/70 bg-white/92 p-4 shadow-card">
                 <div className="grid gap-3">
@@ -1305,7 +1508,15 @@ export function DashboardShell() {
             <div className="text-sm font-semibold text-slate-500">총 {filteredEmployees.length}명</div>
             <div className="space-y-3">
               {filteredEmployees.length ? (
-                filteredEmployees.map((item) => <EmployeeRow key={item.id} item={item} onEdit={openEmployeeEdit} />)
+                filteredEmployees.map((item) => (
+                  <EmployeeRow
+                    key={item.id}
+                    item={item}
+                    onEdit={openEmployeeEdit}
+                    onGrantDiceBonus={user.role === "ADMIN" ? handleGrantDiceBonus : undefined}
+                    diceBonusGranting={diceBonusGrantingNo === item.employeeNo}
+                  />
+                ))
               ) : (
                 <EmptyState label="조건에 맞는 직원이 없습니다." />
               )}

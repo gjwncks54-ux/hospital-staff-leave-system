@@ -144,3 +144,52 @@ export interface PasswordChangeInput {
   currentPassword: string;
   newPassword: string;
 }
+
+export interface DiceRecentRollItem {
+  id: number;
+  rollDate: string;
+  rollValue: number;
+  source: "DAILY" | "BONUS";
+  createdAt: string;
+}
+
+export interface DiceStatus {
+  today: string;
+  normalAvailable: boolean;
+  bonusAvailable: number;
+  totalAvailable: number;
+  recentRolls: DiceRecentRollItem[];
+}
+
+export interface DiceRollItem {
+  id: number;
+  rollDate: string;
+  rollValue: number;
+  source: "DAILY" | "BONUS";
+}
+
+export interface DiceRankingItem {
+  employeeNo: string;
+  employeeName: string;
+  score: number;
+  rolls: number;
+  rank: number;
+}
+
+export interface DiceRanking {
+  monthStart: string;
+  top3: DiceRankingItem[];
+  me: {
+    employeeNo: string;
+    employeeName: string;
+    score: number;
+    rolls: number;
+    rank: number | null;
+  };
+}
+
+export interface DiceRollResponse {
+  roll: DiceRollItem;
+  status: DiceStatus;
+  ranking: DiceRanking;
+}

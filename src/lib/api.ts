@@ -1,6 +1,9 @@
 import type {
   ApprovalActionInput,
   AuthResponse,
+  DiceRanking,
+  DiceRollResponse,
+  DiceStatus,
   EmployeeCreateInput,
   EmployeeLeaveExportItem,
   EmployeeUpdateInput,
@@ -143,6 +146,27 @@ export function createLeaveRequest(input: LeaveRequestInput) {
 export function actOnLeaveRequest(input: ApprovalActionInput) {
   return requestJSON<{ item: LeaveRequestItem }>("/api/leave/approve", {
     method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export function fetchDiceStatus() {
+  return requestJSON<DiceStatus>("/api/dice/status");
+}
+
+export function rollDice() {
+  return requestJSON<DiceRollResponse>("/api/dice/roll", {
+    method: "POST",
+  });
+}
+
+export function fetchDiceRanking() {
+  return requestJSON<DiceRanking>("/api/dice/ranking");
+}
+
+export function grantDiceBonus(input: { employeeNo: string; reason: string }) {
+  return requestJSON<{ ok: true; id: number }>("/api/admin/dice/grant", {
+    method: "POST",
     body: JSON.stringify(input),
   });
 }

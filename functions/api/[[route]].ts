@@ -38,6 +38,7 @@ import {
   formatDbTimestamp,
   resolveCumulativeLeaveAdjustment,
 } from "../lib/leave";
+import { getDiceRanking, getDiceStatus, grantDiceBonus, rollDice } from "../lib/dice";
 import type { LeaveSummary } from "../../src/types";
 import { handle } from "hono/cloudflare-pages";
 
@@ -83,6 +84,11 @@ const approvalSchema = z.object({
 const noticeSchema = z.object({
   title: z.string().trim().min(2).max(80),
   content: z.string().trim().min(2).max(1000),
+});
+
+const diceGrantSchema = z.object({
+  employeeNo: z.string().trim().min(4).max(32),
+  reason: z.string().trim().min(2).max(120).default("원스텝 참여 보너스"),
 });
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -768,6 +774,44 @@ app.patch("/api/leave/approve", authGuard(), async (c) => {
 
   const updated = await getLeaveRequestRowById(c.env.DB, body.data.requestId);
   return c.json({ item: updated ? toLeaveItem(updated) : null });
+});
+
+app.get("/api/dice/status", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  const status = await getDiceStatus(c.env.DB, actor.employee_no);
+  return c.json(status);
+});
+
+app.post("/api/dice/roll", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  const result = await rollDice(c.env.DB, actor.employee_no);
+  if (!result.ok) {
+    return c.json({ message: result.message }, 409);
+  }
+
+  const [status, ranking] = await Promise.all([getDiceStatus(c.env.DB, actor.employee_no), getDiceRanking(c.env.DB, actor.employee_no)]);
+  return c.json({ roll: result.roll, status, ranking }, 201);
+});
+
+app.get("/api/dice/ranking", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  const ranking = await getDiceRanking(c.env.DB, actor.employee_no);
+  return c.json(ranking);
+});
+
+app.post("/api/admin/dice/grant", authGuard(["ADMIN", "DIRECTOR"]), async (c) => {
+  const actor = c.get("employee");
+  const body = diceGrantSchema.safeParse(await c.req.json().catch(() => null));
+  if (!body.success) {
+    return c.json({ message: "보너스 지급 정보를 다시 확인해 주세요." }, 400);
+  }
+
+  const result = await grantDiceBonus(c.env.DB, body.data.employeeNo, body.data.reason, actor);
+  if (!result.ok) {
+    return c.json({ message: result.message }, 400);
+  }
+
+  return c.json({ ok: true, id: result.id }, 201);
 });
 
 app.notFound((c) => c.json({ message: "요청한 API를 찾을 수 없습니다." }, 404));

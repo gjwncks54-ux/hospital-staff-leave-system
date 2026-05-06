@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import {
   getApprovalStages,
   getApprovedStage,
@@ -8,12 +9,25 @@ import {
   isFinalApprovedStatus,
   isInFlightStatus,
 } from "../lib/approval-flow";
-import { ApiError, fetchEmployeeLeaveExport } from "../lib/api";
+import { ApiError, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rollDice as rollDiceApi } from "../lib/api";
 import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
 import { useLeaveStore } from "../stores/leave-store";
-import type { ApprovalActionInput, EmployeeCreateInput, LeaveRequestItem, LeaveSummary, LeaveType, ManagedEmployeeItem, NoticeItem, OrgUnitItem, SessionUser, UserRole } from "../types";
+import type {
+  ApprovalActionInput,
+  DiceRanking,
+  DiceStatus,
+  EmployeeCreateInput,
+  LeaveRequestItem,
+  LeaveSummary,
+  LeaveType,
+  ManagedEmployeeItem,
+  NoticeItem,
+  OrgUnitItem,
+  SessionUser,
+  UserRole,
+} from "../types";
 
 type TabKey = "home" | "history" | "approvals" | "people" | "profile";
 type HistoryFilterKey = "ALL" | "IN_FLIGHT" | "APPROVED" | "REJECTED";
@@ -149,6 +163,7 @@ const emptyEmployeeForm: EmployeeFormState = {
   adjustmentReason: "",
 };
 const employeeRoleOptions: UserRole[] = ["USER", "LEADER", "HR", "ADMIN", "DIRECTOR"];
+const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 function formatOrgPath(path: string[]) {
   return path.length ? path.join(" > ") : "소속 미지정";
@@ -368,6 +383,184 @@ const EmptyState = ({ label }: { label: string }) => (
   <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-white/88 px-4 py-8 text-center text-sm text-slate-500">{label}</div>
 );
 
+const dicePips: Record<number, Array<[number, number]>> = {
+  1: [[32, 32]],
+  2: [
+    [22, 22],
+    [42, 42],
+  ],
+  3: [
+    [22, 22],
+    [32, 32],
+    [42, 42],
+  ],
+  4: [
+    [22, 22],
+    [42, 22],
+    [22, 42],
+    [42, 42],
+  ],
+  5: [
+    [22, 22],
+    [42, 22],
+    [32, 32],
+    [22, 42],
+    [42, 42],
+  ],
+  6: [
+    [22, 20],
+    [42, 20],
+    [22, 32],
+    [42, 32],
+    [22, 44],
+    [42, 44],
+  ],
+};
+
+function DiceFace({ value }: { value: number | "?" }) {
+  const pips = typeof value === "number" ? dicePips[value] ?? [] : [];
+
+  return (
+    <svg viewBox="0 0 64 64" className="size-16" role="img" aria-label={typeof value === "number" ? `주사위 ${value}` : "주사위"}>
+      <rect x="6" y="6" width="52" height="52" rx="14" fill="white" stroke="#f9a8d4" strokeWidth="2" />
+      <rect x="10" y="10" width="44" height="44" rx="11" fill="#fff7fb" />
+      {pips.length ? (
+        pips.map(([cx, cy]) => <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="4.3" fill="#db2777" />)
+      ) : (
+        <text x="32" y="39" textAnchor="middle" fontSize="22" fontWeight="700" fill="#db2777">
+          ?
+        </text>
+      )}
+    </svg>
+  );
+}
+
+function DicePanel({
+  status,
+  ranking,
+  rolling,
+  rollingFace,
+  lastRoll,
+  onRoll,
+}: {
+  status: DiceStatus | null;
+  ranking: DiceRanking | null;
+  rolling: boolean;
+  rollingFace: number;
+  lastRoll: number | null;
+  onRoll: () => void;
+}) {
+  const [rankingOpen, setRankingOpen] = useState(false);
+  const canRoll = Boolean(status && status.totalAvailable > 0);
+  const displayRoll = rolling ? rollingFace : lastRoll ?? status?.recentRolls[0]?.rollValue ?? "?";
+  const rankingGroups = ranking?.top3.reduce<Array<{ rank: number; score: number; names: string[] }>>((groups, item) => {
+    const group = groups.find((entry) => entry.rank === item.rank);
+    if (group) {
+      group.names.push(item.employeeName);
+      return groups;
+    }
+    groups.push({ rank: item.rank, score: item.score, names: [item.employeeName] });
+    return groups;
+  }, []);
+
+  return (
+    <section className="rounded-xl border border-pink-100/80 bg-gradient-to-br from-pink-50 via-white to-emerald-50 p-4 shadow-card">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-pink-400">Today Dice</p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">오늘의 주사위</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            일반 {status?.normalAvailable ? 1 : 0}회 · 보너스 {status?.bonusAvailable ?? 0}회
+          </p>
+        </div>
+        <motion.div
+          className="grid size-16 place-items-center"
+          animate={rolling ? { rotate: [0, 120, 250, 390, 540, 720], y: [0, -9, 5, -7, 3, 0], scale: [1, 1.08, 0.96, 1.06, 0.98, 1] } : { rotate: 0, y: 0, scale: 1 }}
+          transition={{ duration: rolling ? 2 : 0.2, ease: "easeInOut" }}
+        >
+          <DiceFace value={displayRoll} />
+        </motion.div>
+      </div>
+
+      <button
+        type="button"
+        className="mt-4 w-full rounded-xl bg-pink-400 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-pink-200/70 transition hover:bg-pink-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+        disabled={!canRoll || rolling}
+        onClick={onRoll}
+      >
+        {rolling ? "굴리는 중..." : canRoll ? "주사위 굴리기" : "오늘 참여 완료"}
+      </button>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-xl bg-white/80 p-3 ring-1 ring-pink-100/70">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-ink">이번 달 TOP 3</h3>
+            <span className="text-xs font-semibold text-pink-400">{ranking?.monthStart.slice(5, 7) ?? "--"}월</span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {rankingGroups?.length ? (
+              rankingGroups.map((group) => (
+                <div key={group.rank} className="rounded-lg bg-white/70 px-2.5 py-2">
+                  <div className="flex items-center justify-between gap-2 text-sm">
+                    <span className="min-w-0 truncate text-slate-600" title={group.names.join(" / ")}>
+                      {group.rank}위 {group.names.slice(0, 3).join(" / ")}
+                      {group.names.length > 3 ? ` 외 ${group.names.length - 3}명` : ""}
+                    </span>
+                  <span className="shrink-0 font-bold text-ink">{group.score}점</span>
+                </div>
+                </div>
+              ))
+            ) : (
+              <p className="py-2 text-sm text-slate-400">아직 기록이 없습니다.</p>
+            )}
+          </div>
+          {rankingGroups?.length ? (
+            <button type="button" className="mt-3 w-full rounded-lg bg-pink-50 px-3 py-2 text-xs font-semibold text-pink-500" onClick={() => setRankingOpen((current) => !current)}>
+              {rankingOpen ? "전체 랭킹 닫기" : "전체 랭킹 보기"}
+            </button>
+          ) : null}
+        </div>
+
+        <div className="rounded-xl bg-white/80 p-3 ring-1 ring-emerald-100">
+          <p className="text-sm font-semibold text-ink">내 현재 등수</p>
+          <div className="mt-3 flex items-end gap-2">
+            <span className="text-3xl font-bold text-emerald-600">{ranking?.me.rank ?? "-"}</span>
+            <span className="pb-1 text-sm text-slate-500">위</span>
+          </div>
+          <p className="mt-2 text-sm text-slate-500">{ranking?.me.score ?? 0}점 · {ranking?.me.rolls ?? 0}일 참여</p>
+        </div>
+      </div>
+      {rankingOpen && rankingGroups?.length ? (
+        <div className="mt-3 rounded-xl bg-white/90 p-3 ring-1 ring-pink-100">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-ink">전체 랭킹</p>
+            <button type="button" className="text-xs font-semibold text-slate-500" onClick={() => setRankingOpen(false)}>
+              닫기
+            </button>
+          </div>
+          <div className="mt-3 max-h-52 space-y-3 overflow-y-auto pr-1">
+            {rankingGroups.map((group) => (
+              <div key={group.rank} className="rounded-lg bg-pink-50/70 p-2.5">
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="font-semibold text-ink">{group.rank}위 · {group.score}점</span>
+                  <span className="text-xs font-semibold text-pink-500">{group.names.length}명</span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {group.names.map((name, index) => (
+                    <span key={`${group.rank}-${name}-${index}`} className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-pink-500 ring-1 ring-pink-100">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function employeeSearchText(item: ManagedEmployeeItem) {
   return [item.name, item.employeeNo, item.email, roleLabel(item.role), item.teamName, item.leaderName ?? "", formatOrgPath(item.orgPath), employeeStatusLabel(item)]
     .join(" ")
@@ -377,9 +570,13 @@ function employeeSearchText(item: ManagedEmployeeItem) {
 function EmployeeRow({
   item,
   onEdit,
+  onGrantBonus,
+  bonusGranting,
 }: {
   item: ManagedEmployeeItem;
   onEdit: (item: ManagedEmployeeItem) => void;
+  onGrantBonus?: (item: ManagedEmployeeItem) => void;
+  bonusGranting?: boolean;
 }) {
   return (
     <article className="rounded-[1.6rem] border border-white/70 bg-white/92 p-4 shadow-card">
@@ -402,9 +599,21 @@ function EmployeeRow({
             {!item.isActive && item.retiredAt ? <p>퇴사일 · {item.retiredAt}</p> : null}
           </div>
         </div>
-        <button type="button" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600" onClick={() => onEdit(item)}>
-          수정
-        </button>
+        <div className="flex shrink-0 flex-col gap-2">
+          <button type="button" className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600" onClick={() => onEdit(item)}>
+            수정
+          </button>
+          {onGrantBonus ? (
+            <button
+              type="button"
+              className="rounded-full bg-pink-50 px-3 py-1.5 text-xs font-semibold text-pink-500 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={bonusGranting}
+              onClick={() => onGrantBonus(item)}
+            >
+              {bonusGranting ? "지급 중" : "보너스 지급"}
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="mt-4 flex justify-end">
         <span className="rounded-full bg-mint/12 px-3 py-1.5 text-sm font-bold text-mint">
@@ -476,6 +685,12 @@ export function DashboardShell() {
   const [employeeOriginalAdjustment, setEmployeeOriginalAdjustment] = useState(0);
   const [employeeBaseRemainingDays, setEmployeeBaseRemainingDays] = useState(0);
   const [employeeOriginalRemainingDays, setEmployeeOriginalRemainingDays] = useState(0);
+  const [diceStatus, setDiceStatus] = useState<DiceStatus | null>(null);
+  const [diceRanking, setDiceRanking] = useState<DiceRanking | null>(null);
+  const [diceRolling, setDiceRolling] = useState(false);
+  const [rollingDiceFace, setRollingDiceFace] = useState(1);
+  const [lastDiceRoll, setLastDiceRoll] = useState<number | null>(null);
+  const [bonusGrantingEmployeeNo, setBonusGrantingEmployeeNo] = useState<string | null>(null);
 
   function openHistoryTab() {
     setHistorySearch("");
@@ -503,6 +718,10 @@ export function DashboardShell() {
     lastRefreshRef.current = Date.now();
     void refresh(user.id, user.role);
   }, [refresh, user.id, user.role]);
+
+  useEffect(() => {
+    void refreshDice();
+  }, [user.employeeNo]);
 
   useEffect(() => {
     const sync = () => {
@@ -539,6 +758,14 @@ export function DashboardShell() {
     const timer = window.setTimeout(() => setToast(null), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!diceRolling) return;
+    const timer = window.setInterval(() => {
+      setRollingDiceFace((current) => (current % 6) + 1);
+    }, 110);
+    return () => window.clearInterval(timer);
+  }, [diceRolling]);
 
   useEffect(() => {
     setHistoryVisibleCount(HISTORY_PAGE_SIZE);
@@ -843,6 +1070,52 @@ export function DashboardShell() {
     }
   }
 
+  async function refreshDice() {
+    try {
+      const [status, ranking] = await Promise.all([fetchDiceStatus(), fetchDiceRanking()]);
+      setDiceStatus(status);
+      setDiceRanking(ranking);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "주사위 정보를 불러오지 못했습니다.";
+      setToast(message);
+    }
+  }
+
+  async function handleDiceRoll() {
+    if (diceRolling) return;
+    setDiceRolling(true);
+    setLastDiceRoll(null);
+    try {
+      const [response] = await Promise.all([rollDiceApi(), wait(2000)]);
+      setLastDiceRoll(response.roll.rollValue);
+      setDiceStatus(response.status);
+      setDiceRanking(response.ranking);
+      setToast(response.roll.source === "BONUS" ? "보너스 주사위를 사용했습니다." : "오늘의 주사위를 굴렸습니다.");
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "주사위 굴리기에 실패했습니다.";
+      setToast(message);
+      await refreshDice();
+    } finally {
+      setDiceRolling(false);
+    }
+  }
+
+  async function handleGrantDiceBonus(item: ManagedEmployeeItem) {
+    setBonusGrantingEmployeeNo(item.employeeNo);
+    try {
+      await grantDiceBonus({ employeeNo: item.employeeNo, reason: "원스텝 참여 보너스" });
+      setToast(`${item.name}님에게 원스텝 보너스를 지급했습니다.`);
+      if (item.employeeNo === user.employeeNo) {
+        await refreshDice();
+      }
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "보너스 지급에 실패했습니다.";
+      setToast(message);
+    } finally {
+      setBonusGrantingEmployeeNo(null);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-backdrop px-4 py-5 text-ink sm:px-6">
       <div className="mx-auto max-w-[430px] pb-28">
@@ -935,6 +1208,15 @@ export function DashboardShell() {
                 </button>
               </div>
             </section>
+
+            <DicePanel
+              status={diceStatus}
+              ranking={diceRanking}
+              rolling={diceRolling}
+              rollingFace={rollingDiceFace}
+              lastRoll={lastDiceRoll}
+              onRoll={() => void handleDiceRoll()}
+            />
 
             <section className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1305,7 +1587,15 @@ export function DashboardShell() {
             <div className="text-sm font-semibold text-slate-500">총 {filteredEmployees.length}명</div>
             <div className="space-y-3">
               {filteredEmployees.length ? (
-                filteredEmployees.map((item) => <EmployeeRow key={item.id} item={item} onEdit={openEmployeeEdit} />)
+                filteredEmployees.map((item) => (
+                  <EmployeeRow
+                    key={item.id}
+                    item={item}
+                    onEdit={openEmployeeEdit}
+                    onGrantBonus={handleGrantDiceBonus}
+                    bonusGranting={bonusGrantingEmployeeNo === item.employeeNo}
+                  />
+                ))
               ) : (
                 <EmptyState label="조건에 맞는 직원이 없습니다." />
               )}

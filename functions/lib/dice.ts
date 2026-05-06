@@ -52,7 +52,7 @@ function getCurrentMonthRange(today: string) {
 export function buildDiceStatus(counts: DiceStatusCounts): DiceStatus {
   const regularAvailable = counts.regularRolledToday === 0;
   const bonusAvailable = Math.max(0, counts.unusedBonusCount);
-  const rollsRemaining = regularAvailable ? 1 : bonusAvailable;
+  const rollsRemaining = bonusAvailable + (regularAvailable ? 1 : 0);
 
   return {
     canRoll: rollsRemaining > 0,
@@ -66,8 +66,8 @@ export function buildDiceStatus(counts: DiceStatusCounts): DiceStatus {
 }
 
 export function getNextDiceRollKind(status: DiceStatus): DiceRollKind | null {
-  if (status.regularAvailable) return "REGULAR";
   if (status.bonusAvailable > 0) return "BONUS";
+  if (status.regularAvailable) return "REGULAR";
   return null;
 }
 
@@ -134,7 +134,7 @@ export async function getDiceStatusForEmployee(db: D1Database, employeeNo: strin
           WHERE employee_no = ?
             AND roll_date = ?
             AND roll_date >= ?
-          ORDER BY roll_value DESC, id DESC
+          ORDER BY id DESC
           LIMIT 1
         `,
       )
@@ -251,28 +251,20 @@ function toRankItem(row: RankingRow): DiceRankItem {
 }
 
 const rankedScoresSql = `
-  WITH daily_scores AS (
+  WITH scores AS (
     SELECT
-      employee_no,
-      roll_date,
-      MAX(roll_value) AS daily_score
-    FROM dice_rolls
-    WHERE roll_date >= ?
-      AND roll_date < ?
-      AND roll_date >= ?
-    GROUP BY employee_no, roll_date
-  ),
-  scores AS (
-    SELECT
-      ds.employee_no,
-      COALESCE(e.name, ds.employee_no) AS employee_name,
+      dr.employee_no,
+      COALESCE(e.name, dr.employee_no) AS employee_name,
       team.name AS team_name,
-      SUM(ds.daily_score) AS score,
+      SUM(dr.roll_value) AS score,
       COUNT(*) AS roll_count
-    FROM daily_scores ds
-    LEFT JOIN employees e ON e.employee_no = ds.employee_no
+    FROM dice_rolls dr
+    LEFT JOIN employees e ON e.employee_no = dr.employee_no
     LEFT JOIN org_units team ON team.id = e.org_unit_id
-    GROUP BY ds.employee_no
+    WHERE dr.roll_date >= ?
+      AND dr.roll_date < ?
+      AND dr.roll_date >= ?
+    GROUP BY dr.employee_no
   ),
   ranked AS (
     SELECT

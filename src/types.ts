@@ -2,7 +2,6 @@ export type UserRole = "USER" | "LEADER" | "HR" | "ADMIN" | "DIRECTOR";
 export type LeaveType = "ANNUAL" | "HALF_AM" | "HALF_PM" | "SICK" | "UNPAID";
 export type LeaveStatus = "PENDING" | "APPROVED_LEADER" | "APPROVED_HR" | "APPROVED_DIRECTOR" | "REJECTED" | "CANCELLED";
 export type OrgUnitType = "ROOT" | "DIVISION" | "TEAM";
-export type DiceRollKind = "REGULAR" | "BONUS";
 
 export interface SessionUser {
   id: number;
@@ -144,42 +143,4 @@ export interface EmployeeLeaveExportItem {
 export interface PasswordChangeInput {
   currentPassword: string;
   newPassword: string;
-}
-
-export interface DiceStatus {
-  canRoll: boolean;
-  regularAvailable: boolean;
-  bonusAvailable: number;
-  rollsRemaining: number;
-  rolledToday: number;
-  lastRollValue: number | null;
-  lastRollKind: DiceRollKind | null;
-}
-
-export interface DiceRollResponse {
-  rollValue: number;
-  rollKind: DiceRollKind;
-  bonusId: number | null;
-  status: DiceStatus;
-}
-
-export interface DiceRankItem {
-  rank: number | null;
-  employeeNo: string;
-  employeeName: string;
-  teamName: string;
-  score: number;
-  rollCount: number;
-}
-
-export interface DiceRankingResponse {
-  month: string;
-  top: DiceRankItem[];
-  me: DiceRankItem;
-  totalParticipants: number;
-}
-
-export interface DiceGrantInput {
-  employeeNo: string;
-  reason: string;
 }

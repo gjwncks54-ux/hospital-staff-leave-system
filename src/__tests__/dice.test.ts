@@ -16,19 +16,33 @@ describe("dice game status", () => {
     expect(getNextDiceRollKind(status)).toBe("REGULAR");
   });
 
-  it("uses bonus before regular and keeps regular available", () => {
+  it("uses the regular daily chance before any bonus reroll", () => {
     const status = buildDiceStatus({
       regularRolledToday: 0,
-      rolledToday: 1,
+      rolledToday: 0,
       unusedBonusCount: 1,
-      lastRollValue: 4,
-      lastRollKind: "BONUS",
     });
 
     expect(status.canRoll).toBe(true);
     expect(status.regularAvailable).toBe(true);
     expect(status.bonusAvailable).toBe(1);
-    expect(status.rollsRemaining).toBe(2);
+    expect(status.rollsRemaining).toBe(1);
+    expect(getNextDiceRollKind(status)).toBe("REGULAR");
+  });
+
+  it("uses bonus as a reroll only after the daily regular roll", () => {
+    const status = buildDiceStatus({
+      regularRolledToday: 1,
+      rolledToday: 1,
+      unusedBonusCount: 1,
+      lastRollValue: 4,
+      lastRollKind: "REGULAR",
+    });
+
+    expect(status.canRoll).toBe(true);
+    expect(status.regularAvailable).toBe(false);
+    expect(status.bonusAvailable).toBe(1);
+    expect(status.rollsRemaining).toBe(1);
     expect(getNextDiceRollKind(status)).toBe("BONUS");
   });
 

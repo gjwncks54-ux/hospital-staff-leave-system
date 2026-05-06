@@ -370,27 +370,28 @@ const EmptyState = ({ label }: { label: string }) => (
   <div className="rounded-[1.6rem] border border-dashed border-slate-200 bg-white/88 px-4 py-8 text-center text-sm text-slate-500">{label}</div>
 );
 
-const dicePipLayouts: Record<number, string[]> = {
-  1: ["left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"],
-  2: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  3: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  4: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[30%] top-[70%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  5: ["left-[30%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[30%] -translate-x-1/2 -translate-y-1/2", "left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[30%] top-[70%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[70%] -translate-x-1/2 -translate-y-1/2"],
-  6: ["left-[30%] top-[28%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[28%] -translate-x-1/2 -translate-y-1/2", "left-[30%] top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[70%] top-1/2 -translate-x-1/2 -translate-y-1/2", "left-[30%] top-[72%] -translate-x-1/2 -translate-y-1/2", "left-[70%] top-[72%] -translate-x-1/2 -translate-y-1/2"],
+const dicePipLayouts: Record<number, number[]> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
 };
 
 function DicePips({ value }: { value: number | null }) {
   const activeValue = value && value >= 1 && value <= 6 ? value : 1;
   const muted = value === null;
+  const activePips = new Set(dicePipLayouts[activeValue]);
 
   return (
-    <div className="absolute inset-0">
-      {dicePipLayouts[activeValue].map((position, index) => (
+    <div className="grid h-full w-full grid-cols-3 grid-rows-3 place-items-center p-5">
+      {Array.from({ length: 9 }).map((_, index) => (
         <motion.span
           key={`${activeValue}-${index}`}
-          className={`absolute h-4 w-4 rounded-full shadow-sm ${position} ${muted ? "bg-slate-300" : "bg-brand-slate"}`}
+          className={activePips.has(index) ? `h-3.5 w-3.5 rounded-full ${muted ? "bg-white/35" : "bg-white shadow-[0_0_10px_rgba(255,255,255,0.45)]"}` : "h-3.5 w-3.5"}
           initial={{ scale: 0.55, opacity: 0.35 }}
-          animate={{ scale: 1, opacity: muted ? 0.45 : 1 }}
+          animate={{ scale: 1, opacity: activePips.has(index) ? (muted ? 0.5 : 1) : 0 }}
           transition={{ type: "spring", stiffness: 520, damping: 18, delay: index * 0.025 }}
         />
       ))}
@@ -407,7 +408,7 @@ function DiceFace({
 }) {
   return (
     <motion.div
-      className="relative flex aspect-square h-24 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-white via-white to-rose-50 shadow-lg shadow-rose-100 ring-1 ring-rose-200"
+      className="relative flex aspect-square h-24 items-center justify-center overflow-hidden rounded-xl bg-slate-950 shadow-lg shadow-slate-400/30 ring-1 ring-slate-800"
       animate={rolling ? { rotate: [0, -18, 20, -14, 12, 0], y: [0, -18, 8, -10, 3, 0], scale: [1, 1.12, 0.94, 1.08, 0.98, 1] } : { rotate: 0, y: 0, scale: 1 }}
       transition={rolling ? { duration: 0.48, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" } : { type: "spring", stiffness: 260, damping: 15 }}
     >
@@ -441,11 +442,12 @@ function DiceGameCard({
 }) {
   const canRoll = Boolean(status?.canRoll) && !rolling;
   const displayValue = rollValue ?? status?.lastRollValue ?? null;
-  const hasRolledToday = Boolean(status && status.rolledToday > 0);
-  const buttonLabel = rolling ? "굴리는 중..." : hasRolledToday && status?.canRoll ? `다시 굴리기 (${status.rollsRemaining}회)` : "굴리기";
+  const hasRegularRollToday = Boolean(status && !status.regularAvailable);
+  const buttonLabel = rolling ? "굴리는 중..." : hasRegularRollToday && status?.canRoll ? `다시 굴리기 (${status.rollsRemaining}회)` : "굴리기";
   const buttonClassName = canRoll
-    ? "bg-rose-500 text-white shadow-lg shadow-rose-200 hover:translate-y-px"
+    ? "bg-brand-slate text-white shadow-lg shadow-brand-slate/20 hover:translate-y-px"
     : "bg-white text-brand-slate ring-1 ring-brand-slate/15 shadow-md shadow-slate-200/80";
+  const idleMessage = status && !status.regularAvailable && status.bonusAvailable === 0 ? "오늘 참여 완료 · 리롤권이 없습니다" : "오늘 참여 완료 · 내일 다시 열립니다";
 
   return (
     <section className="rounded-xl border border-white/80 bg-white/92 p-4 shadow-card">
@@ -453,22 +455,22 @@ function DiceGameCard({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-400">Today Dice</p>
           <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">오늘의 주사위</h2>
-          <p className="mt-1 text-sm text-slate-500">누르면 주사위가 굴러가고 이번 달 점수에 더해집니다.</p>
+          <p className="mt-1 text-sm text-slate-500">오늘 최고값이 이번 달 점수에 반영됩니다.</p>
         </div>
         <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-500">{ranking?.month ?? "이번 달"}</span>
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs font-semibold">
         <div className="rounded-xl bg-rose-50 px-2 py-2 text-rose-500">
-          <span className="block text-[11px] text-rose-400">남은 횟수</span>
-          <span className="mt-1 block text-base text-ink">{status ? status.rollsRemaining : "--"}회</span>
+          <span className="block text-[11px] text-rose-400">기본 기회</span>
+          <span className="mt-1 block text-base text-ink">{status ? (status.regularAvailable ? "1회" : "사용") : "--"}</span>
         </div>
         <div className="rounded-xl bg-sky-50 px-2 py-2 text-sky-600">
-          <span className="block text-[11px] text-sky-500">오늘 사용</span>
-          <span className="mt-1 block text-base text-ink">{status ? status.rolledToday : "--"}회</span>
+          <span className="block text-[11px] text-sky-500">오늘 최고</span>
+          <span className="mt-1 block text-base text-ink">{displayValue ? `${displayValue}점` : "--"}</span>
         </div>
         <div className="rounded-xl bg-violet-50 px-2 py-2 text-violet-500">
-          <span className="block text-[11px] text-violet-400">보너스</span>
+          <span className="block text-[11px] text-violet-400">리롤권</span>
           <span className="mt-1 block text-base text-ink">{status ? status.bonusAvailable : "--"}회</span>
         </div>
       </div>
@@ -490,7 +492,7 @@ function DiceGameCard({
           >
             {buttonLabel}
           </button>
-          {!status?.canRoll ? <p className="text-center text-xs font-semibold text-slate-400">오늘 참여 완료 · 내일 다시 열립니다</p> : null}
+          {!status?.canRoll ? <p className="text-center text-xs font-semibold text-slate-400">{idleMessage}</p> : null}
         </div>
       </div>
 

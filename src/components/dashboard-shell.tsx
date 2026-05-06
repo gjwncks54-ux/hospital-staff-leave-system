@@ -27,6 +27,7 @@ type EmployeeFormState = EmployeeCreateInput & {
 const AUTO_REFRESH_THROTTLE_MS = 3000;
 const APPROVAL_POLL_MS = 60000;
 const HISTORY_PAGE_SIZE = 10;
+const DICE_ROLL_ANIMATION_MS = 1200;
 const ONE_STEP_URL = "https://docs.google.com/forms/d/1qPrhTSkEeb57nMpXtLtzGkOjSo68mom49RPvyb_g5AM/edit";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
@@ -372,20 +373,24 @@ const EmptyState = ({ label }: { label: string }) => (
 function DiceFace({
   value,
   rolling,
-  animationKey,
 }: {
   value: number | null;
   rolling: boolean;
-  animationKey: number;
 }) {
   return (
     <motion.div
-      key={animationKey}
-      className="flex aspect-square h-24 items-center justify-center rounded-xl bg-white text-[3.2rem] font-semibold leading-none text-rose-500 shadow-lg shadow-rose-100 ring-1 ring-rose-100"
-      animate={rolling ? { rotate: [0, -12, 16, -8, 0], y: [0, -12, 4, -6, 0], scale: [1, 1.08, 0.96, 1.03, 1] } : { rotate: 0, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 340, damping: 13 }}
+      className="relative flex aspect-square h-24 items-center justify-center overflow-hidden rounded-xl bg-white text-[3.2rem] font-semibold leading-none text-rose-500 shadow-lg shadow-rose-100 ring-1 ring-rose-100"
+      animate={rolling ? { rotate: [0, -18, 20, -14, 12, 0], y: [0, -18, 8, -10, 3, 0], scale: [1, 1.12, 0.94, 1.08, 0.98, 1] } : { rotate: 0, y: 0, scale: 1 }}
+      transition={rolling ? { duration: 0.48, repeat: Infinity, repeatType: "mirror", ease: "easeInOut" } : { type: "spring", stiffness: 260, damping: 15 }}
     >
-      {value ?? "?"}
+      <motion.span
+        key={value ?? "empty"}
+        initial={{ y: rolling ? -18 : 0, opacity: rolling ? 0.45 : 1, scale: rolling ? 0.82 : 1 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        transition={{ type: "spring", stiffness: 520, damping: 18 }}
+      >
+        {value ?? "?"}
+      </motion.span>
     </motion.div>
   );
 }
@@ -395,7 +400,6 @@ function DiceGameCard({
   ranking,
   rolling,
   rollValue,
-  animationKey,
   error,
   onRoll,
 }: {
@@ -403,12 +407,13 @@ function DiceGameCard({
   ranking: DiceRankingResponse | null;
   rolling: boolean;
   rollValue: number | null;
-  animationKey: number;
   error: string | null;
   onRoll: () => void;
 }) {
   const canRoll = Boolean(status?.canRoll) && !rolling;
   const displayValue = rollValue ?? status?.lastRollValue ?? null;
+  const hasRolledToday = Boolean(status && status.rolledToday > 0);
+  const buttonLabel = rolling ? "굴리는 중..." : hasRolledToday && status?.canRoll ? `다시 굴리기 (${status.rollsRemaining}회)` : "굴리기";
 
   return (
     <section className="rounded-xl border border-white/80 bg-white/92 p-4 shadow-card">
@@ -416,13 +421,28 @@ function DiceGameCard({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-400">Today Dice</p>
           <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">오늘의 주사위</h2>
-          <p className="mt-1 text-sm text-slate-500">남은 기회 {status ? status.rollsRemaining : "--"}회 · 보너스 {status ? status.bonusAvailable : "--"}회</p>
+          <p className="mt-1 text-sm text-slate-500">누르면 주사위가 굴러가고 이번 달 점수에 더해집니다.</p>
         </div>
         <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-500">{ranking?.month ?? "이번 달"}</span>
       </div>
 
+      <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs font-semibold">
+        <div className="rounded-xl bg-rose-50 px-2 py-2 text-rose-500">
+          <span className="block text-[11px] text-rose-400">남은 횟수</span>
+          <span className="mt-1 block text-base text-ink">{status ? status.rollsRemaining : "--"}회</span>
+        </div>
+        <div className="rounded-xl bg-sky-50 px-2 py-2 text-sky-600">
+          <span className="block text-[11px] text-sky-500">오늘 사용</span>
+          <span className="mt-1 block text-base text-ink">{status ? status.rolledToday : "--"}회</span>
+        </div>
+        <div className="rounded-xl bg-violet-50 px-2 py-2 text-violet-500">
+          <span className="block text-[11px] text-violet-400">보너스</span>
+          <span className="mt-1 block text-base text-ink">{status ? status.bonusAvailable : "--"}회</span>
+        </div>
+      </div>
+
       <div className="mt-4 grid grid-cols-[6rem_minmax(0,1fr)] gap-4">
-        <DiceFace value={displayValue} rolling={rolling} animationKey={animationKey} />
+        <DiceFace value={displayValue} rolling={rolling} />
         <div className="flex min-w-0 flex-col justify-between gap-3">
           <div className="rounded-xl bg-rose-50/70 px-3 py-2 text-sm text-slate-600">
             <span className="font-semibold text-rose-500">내 순위</span>
@@ -436,8 +456,9 @@ function DiceGameCard({
             disabled={!canRoll}
             onClick={onRoll}
           >
-            {rolling ? "굴리는 중..." : status?.canRoll ? "오늘의 주사위 굴리기" : "오늘 참여 완료"}
+            {buttonLabel}
           </button>
+          {!status?.canRoll ? <p className="text-center text-xs font-semibold text-slate-400">오늘 참여 완료 · 내일 다시 열립니다</p> : null}
         </div>
       </div>
 
@@ -596,7 +617,6 @@ export function DashboardShell() {
   const [diceRanking, setDiceRanking] = useState<DiceRankingResponse | null>(null);
   const [diceRollValue, setDiceRollValue] = useState<number | null>(null);
   const [diceRolling, setDiceRolling] = useState(false);
-  const [diceAnimationKey, setDiceAnimationKey] = useState(0);
   const [diceError, setDiceError] = useState<string | null>(null);
   const [diceBonusGrantingNo, setDiceBonusGrantingNo] = useState<string | null>(null);
 
@@ -987,10 +1007,17 @@ export function DashboardShell() {
     if (diceRolling || !diceStatus?.canRoll) return;
     setDiceRolling(true);
     setDiceError(null);
-    setDiceAnimationKey((current) => current + 1);
+    const startedAt = Date.now();
+    const ticker = window.setInterval(() => {
+      setDiceRollValue(Math.floor(Math.random() * 6) + 1);
+    }, 110);
 
     try {
       const response = await rollDice();
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < DICE_ROLL_ANIMATION_MS) {
+        await new Promise((resolve) => window.setTimeout(resolve, DICE_ROLL_ANIMATION_MS - elapsed));
+      }
       setDiceRollValue(response.rollValue);
       setDiceStatus(response.status);
       setToast(response.rollKind === "BONUS" ? `보너스 주사위 ${response.rollValue}점이 기록되었습니다.` : `오늘의 주사위 ${response.rollValue}점이 기록되었습니다.`);
@@ -1002,6 +1029,7 @@ export function DashboardShell() {
       setToast(message);
       await loadDiceData();
     } finally {
+      window.clearInterval(ticker);
       setDiceRolling(false);
     }
   }
@@ -1097,7 +1125,6 @@ export function DashboardShell() {
               ranking={diceRanking}
               rolling={diceRolling}
               rollValue={diceRollValue}
-              animationKey={diceAnimationKey}
               error={diceError}
               onRoll={() => void handleDiceRoll()}
             />

@@ -16,6 +16,10 @@ type DiceRollRow = {
   employee_no: string;
   roll_date: string;
   roll_value: number;
+  die_one: number;
+  die_two: number;
+  is_double: number;
+  roll_score: number;
   roll_kind: "REGULAR" | "BONUS";
   bonus_id: number | null;
   created_at: string;
@@ -55,6 +59,26 @@ export function getDiceToday() {
 
 function isSundayInDiceTimeZone() {
   return new Intl.DateTimeFormat("en-US", { timeZone: DICE_TIME_ZONE, weekday: "short" }).format(new Date()) === "Sun";
+}
+
+export function createDiceRollValue() {
+  const random = new Uint8Array(1);
+
+  while (true) {
+    crypto.getRandomValues(random);
+    if (random[0] < 252) {
+      return (random[0] % 6) + 1;
+    }
+  }
+}
+
+export function createDiceRollResult() {
+  const dieOne = createDiceRollValue();
+  const dieTwo = createDiceRollValue();
+  const isDouble = dieOne === dieTwo;
+  const rollScore = (dieOne + dieTwo) * (isDouble ? 2 : 1);
+
+  return { dieOne, dieTwo, isDouble, rollScore };
 }
 
 export function getDiceCutoffDate() {
@@ -104,7 +128,7 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
     db
       .prepare(
         `
-          SELECT id, employee_no, roll_date, roll_value, roll_kind, bonus_id, created_at
+          SELECT id, employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind, bonus_id, created_at
           FROM dice_rolls
           WHERE employee_no = ?
             AND date(roll_date) >= date(?)
@@ -128,6 +152,10 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
       id: row.id,
       rollDate: row.roll_date,
       rollValue: row.roll_value,
+      dieOne: row.die_one,
+      dieTwo: row.die_two,
+      isDouble: row.is_double === 1,
+      rollScore: row.roll_score,
       source: row.roll_kind === "BONUS" ? "BONUS" : "DAILY",
       createdAt: row.created_at,
     })),
@@ -137,7 +165,7 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
 export async function rollDice(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
-  const rollValue = crypto.getRandomValues(new Uint32Array(1))[0] % 6 + 1;
+  const rollResult = createDiceRollResult();
 
   const availableBonus = await db
     .prepare(
@@ -175,16 +203,16 @@ export async function rollDice(db: D1Database, employeeNo: string) {
     const insertRoll = await db
       .prepare(
         `
-          INSERT INTO dice_rolls (employee_no, roll_date, roll_value, roll_kind, bonus_id)
-          VALUES (?, ?, ?, 'BONUS', ?)
+          INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind, bonus_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'BONUS', ?)
         `,
       )
-      .bind(employeeNo, today, rollValue, availableBonus.id)
+      .bind(employeeNo, today, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, availableBonus.id)
       .run();
 
     return {
       ok: true as const,
-      roll: { id: Number(insertRoll.meta.last_row_id), rollDate: today, rollValue, source: "BONUS" as const },
+      roll: { id: Number(insertRoll.meta.last_row_id), rollDate: today, rollValue: rollResult.dieOne, ...rollResult, source: "BONUS" as const },
     };
   }
 
@@ -213,8 +241,8 @@ export async function rollDice(db: D1Database, employeeNo: string) {
   const insertRoll = await db
     .prepare(
       `
-        INSERT INTO dice_rolls (employee_no, roll_date, roll_value, roll_kind)
-        SELECT ?, ?, ?, 'REGULAR'
+        INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind)
+        SELECT ?, ?, ?, ?, ?, ?, ?, 'REGULAR'
         WHERE COALESCE(
           (
             SELECT COUNT(*)
@@ -228,7 +256,7 @@ export async function rollDice(db: D1Database, employeeNo: string) {
         ) < 1
       `,
     )
-    .bind(employeeNo, today, rollValue, employeeNo, today, cutoff)
+    .bind(employeeNo, today, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, employeeNo, today, cutoff)
     .run()
     .catch(() => null);
 
@@ -238,7 +266,7 @@ export async function rollDice(db: D1Database, employeeNo: string) {
 
   return {
     ok: true as const,
-    roll: { id: Number(insertRoll.meta.last_row_id), rollDate: today, rollValue, source: "DAILY" as const },
+    roll: { id: Number(insertRoll.meta.last_row_id), rollDate: today, rollValue: rollResult.dieOne, ...rollResult, source: "DAILY" as const },
   };
 }
 
@@ -253,12 +281,13 @@ export async function getDiceRanking(db: D1Database, employeeNo: string) {
           SELECT
             dr.employee_no,
             dr.roll_date,
-            MAX(dr.roll_value) AS daily_score,
+            MAX(dr.roll_score) AS daily_score,
             COUNT(*) AS attempts
           FROM dice_rolls dr
           WHERE date(dr.roll_date) >= date(?)
             AND date(dr.roll_date) >= date(?)
             AND date(dr.roll_date) < date(?)
+            AND dr.roll_score > 0
           GROUP BY dr.employee_no, dr.roll_date
         ),
         monthly_scores AS (
@@ -289,12 +318,13 @@ export async function getDiceRanking(db: D1Database, employeeNo: string) {
           SELECT
             dr.employee_no,
             dr.roll_date,
-            MAX(dr.roll_value) AS daily_score,
+            MAX(dr.roll_score) AS daily_score,
             COUNT(*) AS attempts
           FROM dice_rolls dr
           WHERE date(dr.roll_date) >= date(?)
             AND date(dr.roll_date) >= date(?)
             AND date(dr.roll_date) < date(?)
+            AND dr.roll_score > 0
           GROUP BY dr.employee_no, dr.roll_date
         ),
         monthly_scores AS (

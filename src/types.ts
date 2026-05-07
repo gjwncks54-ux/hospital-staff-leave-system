@@ -149,6 +149,10 @@ export interface DiceRecentRollItem {
   id: number;
   rollDate: string;
   rollValue: number;
+  dieOne: number;
+  dieTwo: number;
+  isDouble: boolean;
+  rollScore: number;
   source: "DAILY" | "BONUS";
   createdAt: string;
 }
@@ -165,6 +169,10 @@ export interface DiceRollItem {
   id: number;
   rollDate: string;
   rollValue: number;
+  dieOne: number;
+  dieTwo: number;
+  isDouble: boolean;
+  rollScore: number;
   source: "DAILY" | "BONUS";
 }
 

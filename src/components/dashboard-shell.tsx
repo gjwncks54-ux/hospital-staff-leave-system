@@ -17,6 +17,7 @@ import { useLeaveStore } from "../stores/leave-store";
 import type {
   ApprovalActionInput,
   DiceRanking,
+  DiceRollItem,
   DiceStatus,
   EmployeeCreateInput,
   LeaveRequestItem,
@@ -439,20 +440,23 @@ function DicePanel({
   status,
   ranking,
   rolling,
-  rollingFace,
+  rollingFaces,
   lastRoll,
   onRoll,
 }: {
   status: DiceStatus | null;
   ranking: DiceRanking | null;
   rolling: boolean;
-  rollingFace: number;
-  lastRoll: number | null;
+  rollingFaces: [number, number];
+  lastRoll: DiceRollItem | null;
   onRoll: () => void;
 }) {
   const [rankingOpen, setRankingOpen] = useState(false);
   const canRoll = Boolean(status && status.totalAvailable > 0);
-  const displayRoll = rolling ? rollingFace : lastRoll ?? status?.recentRolls[0]?.rollValue ?? "?";
+  const latestRoll = lastRoll ?? status?.recentRolls[0] ?? null;
+  const displayDice: [number | "?", number | "?"] = rolling
+    ? rollingFaces
+    : [latestRoll?.dieOne ?? latestRoll?.rollValue ?? "?", latestRoll?.dieTwo ?? "?"];
   const rankingGroups = ranking?.top3.reduce<Array<{ rank: number; score: number; names: string[] }>>((groups, item) => {
     const group = groups.find((entry) => entry.rank === item.rank);
     if (group) {
@@ -474,12 +478,20 @@ function DicePanel({
           </p>
         </div>
         <motion.div
-          className="grid size-16 place-items-center"
+          className="flex shrink-0 items-center gap-2"
           animate={rolling ? { rotate: [0, 120, 250, 390, 540, 720], y: [0, -9, 5, -7, 3, 0], scale: [1, 1.08, 0.96, 1.06, 0.98, 1] } : { rotate: 0, y: 0, scale: 1 }}
           transition={{ duration: rolling ? 2 : 0.2, ease: "easeInOut" }}
         >
-          <DiceFace value={displayRoll} />
+          <DiceFace value={displayDice[0]} />
+          <DiceFace value={displayDice[1]} />
         </motion.div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="rounded-full bg-white/80 px-3 py-1 font-semibold text-slate-500 ring-1 ring-pink-100">
+          최종 {latestRoll?.rollScore ?? "-"}점
+        </span>
+        {latestRoll?.isDouble ? <span className="rounded-full bg-pink-100 px-3 py-1 font-bold text-pink-500">Double x2</span> : null}
       </div>
 
       <button
@@ -506,8 +518,8 @@ function DicePanel({
                       {group.rank}위 {group.names.slice(0, 3).join(" / ")}
                       {group.names.length > 3 ? ` 외 ${group.names.length - 3}명` : ""}
                     </span>
-                  <span className="shrink-0 font-bold text-ink">{group.score}점</span>
-                </div>
+                    <span className="shrink-0 font-bold text-ink">{group.score}점</span>
+                  </div>
                 </div>
               ))
             ) : (
@@ -688,8 +700,8 @@ export function DashboardShell() {
   const [diceStatus, setDiceStatus] = useState<DiceStatus | null>(null);
   const [diceRanking, setDiceRanking] = useState<DiceRanking | null>(null);
   const [diceRolling, setDiceRolling] = useState(false);
-  const [rollingDiceFace, setRollingDiceFace] = useState(1);
-  const [lastDiceRoll, setLastDiceRoll] = useState<number | null>(null);
+  const [rollingDiceFaces, setRollingDiceFaces] = useState<[number, number]>([1, 2]);
+  const [lastDiceRoll, setLastDiceRoll] = useState<DiceRollItem | null>(null);
   const [bonusGrantingEmployeeNo, setBonusGrantingEmployeeNo] = useState<string | null>(null);
 
   function openHistoryTab() {
@@ -762,7 +774,7 @@ export function DashboardShell() {
   useEffect(() => {
     if (!diceRolling) return;
     const timer = window.setInterval(() => {
-      setRollingDiceFace((current) => (current % 6) + 1);
+      setRollingDiceFaces(([first, second]) => [(first % 6) + 1, ((second + 2) % 6) + 1]);
     }, 110);
     return () => window.clearInterval(timer);
   }, [diceRolling]);
@@ -1087,7 +1099,7 @@ export function DashboardShell() {
     setLastDiceRoll(null);
     try {
       const [response] = await Promise.all([rollDiceApi(), wait(2000)]);
-      setLastDiceRoll(response.roll.rollValue);
+      setLastDiceRoll(response.roll);
       setDiceStatus(response.status);
       setDiceRanking(response.ranking);
       setToast(response.roll.source === "BONUS" ? "보너스 주사위를 사용했습니다." : "오늘의 주사위를 굴렸습니다.");
@@ -1213,7 +1225,7 @@ export function DashboardShell() {
               status={diceStatus}
               ranking={diceRanking}
               rolling={diceRolling}
-              rollingFace={rollingDiceFace}
+              rollingFaces={rollingDiceFaces}
               lastRoll={lastDiceRoll}
               onRoll={() => void handleDiceRoll()}
             />

@@ -99,7 +99,7 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
 
-  const [todayRolls, bonusCount, recentRolls] = await Promise.all([
+  const [todayRolls, bonusCount, recentRolls, todayBest] = await Promise.all([
     db
       .prepare(
         `
@@ -138,6 +138,21 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
       )
       .bind(employeeNo, cutoff)
       .all<DiceRollRow>(),
+    db
+      .prepare(
+        `
+          SELECT
+            COALESCE(MAX(roll_score), 0) AS best_score,
+            COUNT(*) AS attempts
+          FROM dice_rolls
+          WHERE employee_no = ?
+            AND roll_date = ?
+            AND roll_score > 0
+            AND date(roll_date) >= date(?)
+        `,
+      )
+      .bind(employeeNo, today, cutoff)
+      .first<{ best_score: number; attempts: number }>(),
   ]);
 
   const normalAvailable = !isSundayInDiceTimeZone() && Number(todayRolls?.count ?? 0) < 1;
@@ -148,6 +163,8 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
     normalAvailable,
     bonusAvailable,
     totalAvailable: (normalAvailable ? 1 : 0) + bonusAvailable,
+    todayBestScore: Number(todayBest?.best_score ?? 0),
+    todayAttempts: Number(todayBest?.attempts ?? 0),
     recentRolls: recentRolls.results.map((row) => ({
       id: row.id,
       rollDate: row.roll_date,
@@ -297,7 +314,7 @@ export async function getDiceRanking(db: D1Database, employeeNo: string) {
             SUM(db.daily_score) AS score,
             COUNT(*) AS rolls,
             SUM(db.attempts) AS attempts,
-            RANK() OVER (ORDER BY SUM(db.daily_score) DESC) AS rank
+            DENSE_RANK() OVER (ORDER BY SUM(db.daily_score) DESC) AS rank
           FROM daily_best db
           LEFT JOIN employees e ON e.employee_no = db.employee_no
           GROUP BY db.employee_no
@@ -334,7 +351,7 @@ export async function getDiceRanking(db: D1Database, employeeNo: string) {
             SUM(db.daily_score) AS score,
             COUNT(*) AS rolls,
             SUM(db.attempts) AS attempts,
-            RANK() OVER (ORDER BY SUM(db.daily_score) DESC) AS rank
+            DENSE_RANK() OVER (ORDER BY SUM(db.daily_score) DESC) AS rank
           FROM daily_best db
           LEFT JOIN employees e ON e.employee_no = db.employee_no
           GROUP BY db.employee_no

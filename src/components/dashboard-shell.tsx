@@ -489,7 +489,10 @@ function DicePanel({
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
         <span className="rounded-full bg-white/80 px-3 py-1 font-semibold text-slate-500 ring-1 ring-pink-100">
-          최종 {latestRoll?.rollScore ?? "-"}점
+          이번 결과 {latestRoll?.rollScore ?? "-"}점
+        </span>
+        <span className="rounded-full bg-emerald-50 px-3 py-1 font-bold text-emerald-600 ring-1 ring-emerald-100">
+          오늘 반영 {status?.todayBestScore ?? 0}점
         </span>
         {latestRoll?.isDouble ? <span className="rounded-full bg-pink-100 px-3 py-1 font-bold text-pink-500">Double x2</span> : null}
       </div>

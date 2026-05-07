@@ -162,6 +162,8 @@ export interface DiceStatus {
   normalAvailable: boolean;
   bonusAvailable: number;
   totalAvailable: number;
+  todayBestScore: number;
+  todayAttempts: number;
   recentRolls: DiceRecentRollItem[];
 }
 

@@ -38,7 +38,7 @@ import {
   formatDbTimestamp,
   resolveCumulativeLeaveAdjustment,
 } from "../lib/leave";
-import { getDiceRanking, getDiceStatus, grantDiceBonus, rollDice } from "../lib/dice";
+import { getDiceRanking, getDiceStatus, grantDiceBonus, rerollDice, rollDice } from "../lib/dice";
 import type { LeaveSummary } from "../../src/types";
 import { handle } from "hono/cloudflare-pages";
 
@@ -92,6 +92,11 @@ const diceGrantSchema = z.object({
 });
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+const diceRerollSchema = z
+  .object({
+    rollDate: z.string().regex(datePattern).optional(),
+  })
+  .optional();
 const isHalfDayStep = (value: number) => Number.isFinite(value) && Math.abs(value * 2 - Math.round(value * 2)) < 1e-9;
 const roundLeaveDays = (value: number) => Number(value.toFixed(1));
 
@@ -785,6 +790,22 @@ app.get("/api/dice/status", authGuard(), async (c) => {
 app.post("/api/dice/roll", authGuard(), async (c) => {
   const actor = c.get("employee");
   const result = await rollDice(c.env.DB, actor.employee_no);
+  if (!result.ok) {
+    return c.json({ message: result.message }, 409);
+  }
+
+  const [status, ranking] = await Promise.all([getDiceStatus(c.env.DB, actor.employee_no), getDiceRanking(c.env.DB, actor.employee_no)]);
+  return c.json({ roll: result.roll, status, ranking }, 201);
+});
+
+app.post("/api/dice/reroll", authGuard(), async (c) => {
+  const actor = c.get("employee");
+  const body = diceRerollSchema.safeParse(await c.req.json().catch(() => undefined));
+  if (!body.success) {
+    return c.json({ message: "리롤 날짜 정보를 다시 확인해 주세요." }, 400);
+  }
+
+  const result = await rerollDice(c.env.DB, actor.employee_no, body.data?.rollDate);
   if (!result.ok) {
     return c.json({ message: result.message }, 409);
   }

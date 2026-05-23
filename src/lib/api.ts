@@ -160,6 +160,13 @@ export function rollDice() {
   });
 }
 
+export function rerollDice(input?: { rollDate?: string }) {
+  return requestJSON<DiceRollResponse>("/api/dice/reroll", {
+    method: "POST",
+    body: JSON.stringify(input ?? {}),
+  });
+}
+
 export function fetchDiceRanking() {
   return requestJSON<DiceRanking>("/api/dice/ranking");
 }

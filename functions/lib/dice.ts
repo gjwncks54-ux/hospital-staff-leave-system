@@ -2,6 +2,7 @@ import type { EmployeeRecord } from "./db";
 
 const DICE_LOOKBACK_DAYS = 365;
 const DICE_TIME_ZONE = "Asia/Seoul";
+const DICE_CREDIT_START_DATE = "2026-05-23";
 
 type DiceBonusRow = {
   id: number;
@@ -53,6 +54,33 @@ function addMonths(dateString: string, months: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function addDays(dateString: string, days: number) {
+  const date = new Date(`${dateString}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function maxDateString(first: string, second: string) {
+  return first > second ? first : second;
+}
+
+function getWeekdayUTC(dateString: string) {
+  return new Date(`${dateString}T00:00:00Z`).getUTCDay();
+}
+
+function getEligibleRegularDates(monthStart: string, today: string) {
+  const startDate = maxDateString(monthStart, DICE_CREDIT_START_DATE);
+  const dates: string[] = [];
+
+  for (let cursor = startDate; cursor <= today; cursor = addDays(cursor, 1)) {
+    if (getWeekdayUTC(cursor) !== 0) {
+      dates.push(cursor);
+    }
+  }
+
+  return dates;
+}
+
 export function getDiceToday() {
   return formatDateInZone(new Date(), DICE_TIME_ZONE);
 }
@@ -98,21 +126,24 @@ export function getDiceMonthWindow(today = getDiceToday()) {
 export async function getDiceStatus(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
+  const { monthStart, nextMonthStart } = getDiceMonthWindow(today);
+  const eligibleRegularDates = getEligibleRegularDates(monthStart, today);
 
-  const [todayRolls, bonusCount, recentRolls, todayBest] = await Promise.all([
+  const [regularRollDates, bonusCount, recentRolls, todayBest] = await Promise.all([
     db
       .prepare(
         `
-          SELECT COUNT(*) AS count
+          SELECT DISTINCT roll_date
           FROM dice_rolls
           WHERE employee_no = ?
-            AND roll_date = ?
             AND roll_kind = 'REGULAR'
             AND date(roll_date) >= date(?)
+            AND date(roll_date) >= date(?)
+            AND date(roll_date) < date(?)
         `,
       )
-      .bind(employeeNo, today, cutoff)
-      .first<{ count: number }>(),
+      .bind(employeeNo, cutoff, monthStart, nextMonthStart)
+      .all<{ roll_date: string }>(),
     db
       .prepare(
         `
@@ -155,14 +186,18 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
       .first<{ best_score: number; attempts: number }>(),
   ]);
 
-  const normalAvailable = !isSundayInDiceTimeZone() && Number(todayRolls?.count ?? 0) < 1;
+  const usedRegularDates = new Set(regularRollDates.results.map((row) => row.roll_date));
+  const availableRegularDates = eligibleRegularDates.filter((date) => !usedRegularDates.has(date));
+  const normalAvailable = availableRegularDates.length > 0;
   const bonusAvailable = Number(bonusCount?.count ?? 0);
 
   return {
     today,
     normalAvailable,
+    regularAvailable: availableRegularDates.length,
+    nextRegularRollDate: availableRegularDates[0] ?? null,
     bonusAvailable,
-    totalAvailable: (normalAvailable ? 1 : 0) + bonusAvailable,
+    totalAvailable: availableRegularDates.length + bonusAvailable,
     todayBestScore: Number(todayBest?.best_score ?? 0),
     todayAttempts: Number(todayBest?.attempts ?? 0),
     recentRolls: recentRolls.results.map((row) => ({
@@ -182,7 +217,107 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
 export async function rollDice(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
+  const { monthStart, nextMonthStart } = getDiceMonthWindow(today);
   const rollResult = createDiceRollResult();
+
+  {
+    const regularRollDates = await db
+      .prepare(
+        `
+          SELECT DISTINCT roll_date
+          FROM dice_rolls
+          WHERE employee_no = ?
+            AND roll_kind = 'REGULAR'
+            AND date(roll_date) >= date(?)
+            AND date(roll_date) >= date(?)
+            AND date(roll_date) < date(?)
+        `,
+      )
+      .bind(employeeNo, cutoff, monthStart, nextMonthStart)
+      .all<{ roll_date: string }>();
+
+    const usedRegularDates = new Set(regularRollDates.results.map((row) => row.roll_date));
+    const targetDate = getEligibleRegularDates(monthStart, today).find((date) => !usedRegularDates.has(date));
+
+    if (!targetDate) {
+      return { ok: false as const, message: "사용 가능한 누적 참여권이 없습니다." };
+    }
+
+    const insertRegularRoll = await db
+      .prepare(
+        `
+          INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind)
+          SELECT ?, ?, ?, ?, ?, ?, ?, 'REGULAR'
+          WHERE COALESCE(
+            (
+              SELECT COUNT(*)
+              FROM dice_rolls
+              WHERE employee_no = ?
+                AND roll_date = ?
+                AND roll_kind = 'REGULAR'
+                AND date(roll_date) >= date(?)
+            ),
+            0
+          ) < 1
+        `,
+      )
+      .bind(employeeNo, targetDate, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, employeeNo, targetDate, cutoff)
+      .run()
+      .catch(() => null);
+
+    if (!insertRegularRoll || insertRegularRoll.meta.changes < 1) {
+      return { ok: false as const, message: "해당 날짜의 일반 참여권은 이미 사용되었습니다." };
+    }
+
+    return {
+      ok: true as const,
+      roll: { id: Number(insertRegularRoll.meta.last_row_id), rollDate: targetDate, rollValue: rollResult.dieOne, ...rollResult, source: "DAILY" as const },
+    };
+  }
+
+}
+
+export async function rerollDice(db: D1Database, employeeNo: string, requestedRollDate?: string) {
+  const today = getDiceToday();
+  const cutoff = getDiceCutoffDate();
+  const { monthStart, nextMonthStart } = getDiceMonthWindow(today);
+  const rollResult = createDiceRollResult();
+
+  const targetRoll = requestedRollDate
+    ? await db
+        .prepare(
+          `
+            SELECT roll_date
+            FROM dice_rolls
+            WHERE employee_no = ?
+              AND roll_date = ?
+              AND date(roll_date) >= date(?)
+              AND date(roll_date) >= date(?)
+              AND date(roll_date) < date(?)
+            LIMIT 1
+          `,
+        )
+        .bind(employeeNo, requestedRollDate, cutoff, monthStart, nextMonthStart)
+        .first<{ roll_date: string }>()
+    : await db
+        .prepare(
+          `
+            SELECT roll_date
+            FROM dice_rolls
+            WHERE employee_no = ?
+              AND date(roll_date) >= date(?)
+              AND date(roll_date) >= date(?)
+              AND date(roll_date) < date(?)
+            ORDER BY created_at DESC
+            LIMIT 1
+          `,
+        )
+        .bind(employeeNo, cutoff, monthStart, nextMonthStart)
+        .first<{ roll_date: string }>();
+
+  if (!targetRoll) {
+    return { ok: false as const, message: "리롤할 주사위 기록이 없습니다." };
+  }
 
   const availableBonus = await db
     .prepare(
@@ -199,91 +334,40 @@ export async function rollDice(db: D1Database, employeeNo: string) {
     .bind(employeeNo, cutoff)
     .first<DiceBonusRow>();
 
-  if (availableBonus) {
-    const updateBonus = await db
-      .prepare(
-        `
-          UPDATE dice_bonuses
-          SET used = 1
-          WHERE id = ?
-            AND employee_no = ?
-            AND used = 0
-        `,
-      )
-      .bind(availableBonus.id, employeeNo)
-      .run();
-
-    if (updateBonus.meta.changes < 1) {
-      return { ok: false as const, message: "보너스 사용 상태가 변경되었습니다. 새로고침 후 다시 시도해 주세요." };
-    }
-
-    const insertRoll = await db
-      .prepare(
-        `
-          INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind, bonus_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'BONUS', ?)
-        `,
-      )
-      .bind(employeeNo, today, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, availableBonus.id)
-      .run();
-
-    return {
-      ok: true as const,
-      roll: { id: Number(insertRoll.meta.last_row_id), rollDate: today, rollValue: rollResult.dieOne, ...rollResult, source: "BONUS" as const },
-    };
+  if (!availableBonus) {
+    return { ok: false as const, message: "사용 가능한 원스텝 리롤권이 없습니다." };
   }
 
-  if (isSundayInDiceTimeZone()) {
-    return { ok: false as const, message: "일요일에는 오늘의 주사위 참여권이 생성되지 않습니다." };
-  }
-
-  const todayRolls = await db
+  const updateBonus = await db
     .prepare(
       `
-          SELECT COUNT(*) AS count
-          FROM dice_rolls
-          WHERE employee_no = ?
-            AND roll_date = ?
-            AND roll_kind = 'REGULAR'
-            AND date(roll_date) >= date(?)
+        UPDATE dice_bonuses
+        SET used = 1
+        WHERE id = ?
+          AND employee_no = ?
+          AND used = 0
       `,
     )
-    .bind(employeeNo, today, cutoff)
-    .first<{ count: number }>();
+    .bind(availableBonus.id, employeeNo)
+    .run();
 
-  if (Number(todayRolls?.count ?? 0) >= 1) {
-    return { ok: false as const, message: "오늘의 일반 참여는 이미 완료되었습니다." };
+  if (updateBonus.meta.changes < 1) {
+    return { ok: false as const, message: "보너스 사용 상태가 변경되었습니다. 새로고침 후 다시 시도해 주세요." };
   }
 
   const insertRoll = await db
     .prepare(
       `
-        INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind)
-        SELECT ?, ?, ?, ?, ?, ?, ?, 'REGULAR'
-        WHERE COALESCE(
-          (
-            SELECT COUNT(*)
-            FROM dice_rolls
-            WHERE employee_no = ?
-              AND roll_date = ?
-              AND roll_kind = 'REGULAR'
-              AND date(roll_date) >= date(?)
-          ),
-          0
-        ) < 1
+        INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind, bonus_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'BONUS', ?)
       `,
     )
-    .bind(employeeNo, today, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, employeeNo, today, cutoff)
-    .run()
-    .catch(() => null);
-
-  if (!insertRoll || insertRoll.meta.changes < 1) {
-    return { ok: false as const, message: "오늘의 일반 참여는 이미 완료되었습니다." };
-  }
+    .bind(employeeNo, targetRoll.roll_date, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, availableBonus.id)
+    .run();
 
   return {
     ok: true as const,
-    roll: { id: Number(insertRoll.meta.last_row_id), rollDate: today, rollValue: rollResult.dieOne, ...rollResult, source: "DAILY" as const },
+    roll: { id: Number(insertRoll.meta.last_row_id), rollDate: targetRoll.roll_date, rollValue: rollResult.dieOne, ...rollResult, source: "BONUS" as const },
   };
 }
 

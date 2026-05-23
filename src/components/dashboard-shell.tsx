@@ -9,7 +9,7 @@ import {
   isFinalApprovedStatus,
   isInFlightStatus,
 } from "../lib/approval-flow";
-import { ApiError, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rollDice as rollDiceApi } from "../lib/api";
+import { ApiError, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rerollDice as rerollDiceApi, rollDice as rollDiceApi } from "../lib/api";
 import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
@@ -443,6 +443,7 @@ function DicePanel({
   rollingFaces,
   lastRoll,
   onRoll,
+  onReroll,
 }: {
   status: DiceStatus | null;
   ranking: DiceRanking | null;
@@ -450,10 +451,12 @@ function DicePanel({
   rollingFaces: [number, number];
   lastRoll: DiceRollItem | null;
   onRoll: () => void;
+  onReroll: () => void;
 }) {
   const [rankingOpen, setRankingOpen] = useState(false);
-  const canRoll = Boolean(status && status.totalAvailable > 0);
   const latestRoll = lastRoll ?? status?.recentRolls[0] ?? null;
+  const canRoll = Boolean(status && status.regularAvailable > 0);
+  const canReroll = Boolean(status && status.bonusAvailable > 0 && latestRoll);
   const displayDice: [number | "?", number | "?"] = rolling
     ? rollingFaces
     : [latestRoll?.dieOne ?? latestRoll?.rollValue ?? "?", latestRoll?.dieTwo ?? "?"];
@@ -474,7 +477,7 @@ function DicePanel({
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-pink-400">Today Dice</p>
           <h2 className="mt-1 text-lg font-semibold tracking-tight text-ink">오늘의 주사위</h2>
           <p className="mt-1 text-sm text-slate-500">
-            일반 {status?.normalAvailable ? 1 : 0}회 · 보너스 {status?.bonusAvailable ?? 0}회
+            누적 참여권 {status?.regularAvailable ?? 0}회 · 원스텝 리롤 {status?.bonusAvailable ?? 0}회
           </p>
         </div>
         <motion.div
@@ -497,14 +500,24 @@ function DicePanel({
         {latestRoll?.isDouble ? <span className="rounded-full bg-pink-100 px-3 py-1 font-bold text-pink-500">Double x2</span> : null}
       </div>
 
-      <button
-        type="button"
-        className="mt-4 w-full rounded-xl bg-pink-400 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-pink-200/70 transition hover:bg-pink-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
-        disabled={!canRoll || rolling}
-        onClick={onRoll}
-      >
-        {rolling ? "굴리는 중..." : canRoll ? "주사위 굴리기" : "오늘 참여 완료"}
-      </button>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          className="w-full rounded-xl bg-pink-400 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-pink-200/70 transition hover:bg-pink-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+          disabled={!canRoll || rolling}
+          onClick={onRoll}
+        >
+          {rolling ? "굴리는 중..." : canRoll ? `누적 참여권 굴리기${status?.nextRegularRollDate ? ` (${status.nextRegularRollDate.slice(5)})` : ""}` : "누적 참여권 없음"}
+        </button>
+        <button
+          type="button"
+          className="w-full rounded-xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-200/70 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
+          disabled={!canReroll || rolling}
+          onClick={onReroll}
+        >
+          {rolling ? "굴리는 중..." : canReroll ? "원스텝 리롤하기" : "리롤권 없음"}
+        </button>
+      </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-xl bg-white/80 p-3 ring-1 ring-pink-100/70">
@@ -1115,6 +1128,26 @@ export function DashboardShell() {
     }
   }
 
+  async function handleDiceReroll() {
+    if (diceRolling) return;
+    const targetRollDate = lastDiceRoll?.rollDate ?? diceStatus?.recentRolls[0]?.rollDate;
+    setDiceRolling(true);
+    setLastDiceRoll(null);
+    try {
+      const [response] = await Promise.all([rerollDiceApi({ rollDate: targetRollDate }), wait(2000)]);
+      setLastDiceRoll(response.roll);
+      setDiceStatus(response.status);
+      setDiceRanking(response.ranking);
+      setToast(`${response.roll.rollDate} 리롤을 반영했습니다. 더 높은 점수만 랭킹에 적용됩니다.`);
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "리롤에 실패했습니다.";
+      setToast(message);
+      await refreshDice();
+    } finally {
+      setDiceRolling(false);
+    }
+  }
+
   async function handleGrantDiceBonus(item: ManagedEmployeeItem) {
     setBonusGrantingEmployeeNo(item.employeeNo);
     try {
@@ -1231,6 +1264,7 @@ export function DashboardShell() {
               rollingFaces={rollingDiceFaces}
               lastRoll={lastDiceRoll}
               onRoll={() => void handleDiceRoll()}
+              onReroll={() => void handleDiceReroll()}
             />
 
             <section className="space-y-3">

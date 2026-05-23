@@ -160,6 +160,8 @@ export interface DiceRecentRollItem {
 export interface DiceStatus {
   today: string;
   normalAvailable: boolean;
+  regularAvailable: number;
+  nextRegularRollDate: string | null;
   bonusAvailable: number;
   totalAvailable: number;
   todayBestScore: number;

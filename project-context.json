@@ -1,14 +1,14 @@
 {
-  "schemaVersion": 2,
-  "generatedAt": "2026-04-28",
-  "handoffPurpose": "Allow a new Codex session or a different AI account to maintain the project without losing operational context.",
+  "schemaVersion": 3,
+  "generatedAt": "2026-06-03",
+  "handoffPurpose": "Allow a new Codex session or a different AI account to maintain the production hospital leave-management system without losing operational context.",
   "project": {
     "name": "Hospital Staff Leave Management System",
-    "displayName": "우리베스트내과의원 휴가관리",
-    "status": "production-like active pilot",
+    "displayName": "Hospital Staff Leave Management System",
+    "status": "production",
     "repository": "https://github.com/gjwncks54-ux/hospital-staff-leave-system",
     "defaultBranch": "main",
-    "productionUrl": "https://hospital-staff-leave-system.pages.dev",
+    "productionUrl": "https://hospital-staff-leave-system-a6q.pages.dev",
     "stack": {
       "frontend": ["React", "Vite", "TypeScript", "Tailwind CSS", "Zustand"],
       "backend": ["Cloudflare Pages Functions", "Hono", "Cloudflare D1"],
@@ -19,27 +19,38 @@
     "test": "npm test",
     "build": "npm run build",
     "deploy": "npm run cf:deploy",
-    "productionHealthCheck": "curl.exe -I https://hospital-staff-leave-system.pages.dev/"
+    "productionHealthCheck": "curl.exe -I https://hospital-staff-leave-system-a6q.pages.dev/"
   },
   "deployment": {
+    "cloudflareAccountEmail": "so7172@naver.com",
+    "cloudflareAccountId": "17bcb091e79dc5a01cdcab39bc110c63",
     "cloudflarePagesProject": "hospital-staff-leave-system",
+    "productionUrl": "https://hospital-staff-leave-system-a6q.pages.dev",
     "d1BindingName": "DB",
+    "d1DatabaseName": "hospital-staff-leave-db",
+    "d1DatabaseId": "92afa7e7-10b5-423a-a5ea-383af8a46b89",
+    "sessionCookieName": "hospital_leave_session",
+    "jwtSecretLocation": "Cloudflare Pages secret",
     "wranglerConfig": "wrangler.toml",
     "notes": [
       "Use npm run cf:deploy for production deployment.",
-      "After deploy, verify the production URL responds with HTTP 200.",
-      "The app intentionally uses the pages.dev URL unless a custom domain is added later."
+      "Before deploy, verify npx wrangler whoami shows so7172@naver.com and account ID 17bcb091e79dc5a01cdcab39bc110c63.",
+      "After deploy, verify https://hospital-staff-leave-system-a6q.pages.dev responds with HTTP 200.",
+      "Do not use the old developer-owned Pages URL https://hospital-staff-leave-system.pages.dev.",
+      "Do not use the old developer-owned D1 database ID 5f524992-a63f-49a0-ad96-c0b9c09f3441."
     ]
   },
   "operationalRules": {
     "mustDo": [
+      "Read READ_FIRST_FOR_CODEX.md and this project-context.json before changing code.",
       "Gather evidence before editing.",
       "Run npm test and npm run build after business logic changes.",
       "Keep production DB changes targeted and review SELECT results before UPDATE or DELETE.",
       "Commit and push production-relevant code changes to main when the user asks for GitHub sync."
     ],
     "mustNotDo": [
-      "Do not reset or recreate the production D1 database without explicit approval.",
+      "Do not reset, wipe, seed over, recreate, or bulk edit the production D1 database without explicit approval.",
+      "Do not run db:seed:remote against production.",
       "Do not commit secrets, cookies, local temp files, or credentials.",
       "Do not commit .tmp-* files, .claude/, .wrangler/, or real env files.",
       "Do not use destructive Git commands such as git reset --hard unless explicitly requested."
@@ -48,6 +59,7 @@
   "auth": {
     "loginMethod": "employee_no + password",
     "sessionMode": "HTTP-only JWT cookie",
+    "sessionCookieName": "hospital_leave_session",
     "loginRateLimit": {
       "enabled": false,
       "reason": "User requested removal; login attempts no longer lock or throttle accounts."
@@ -59,15 +71,15 @@
   },
   "roles": {
     "USER": {
-      "label": "직원",
+      "label": "Staff",
       "capabilities": ["own_leave_request", "own_balance_view", "own_history_view"]
     },
     "LEADER": {
-      "label": "팀장",
+      "label": "Leader",
       "capabilities": ["own_leave_request", "own_and_team_scope", "leader_stage_approval_only"]
     },
     "HR": {
-      "label": "인사",
+      "label": "HR",
       "capabilities": ["hr_stage_approval_only"],
       "restrictions": ["no_super_pass", "no_employee_management"]
     },
@@ -76,7 +88,7 @@
       "capabilities": ["employee_management", "notice_management", "leave_summary_export", "super_pass_approval"]
     },
     "DIRECTOR": {
-      "label": "원장",
+      "label": "Director",
       "capabilities": ["employee_management", "notice_management", "super_pass_approval"]
     }
   },
@@ -112,20 +124,6 @@
     "logTable": "employee_leave_adjustments",
     "mobileNegativeInput": "Use text input with decimal inputMode, not input type=number, so mobile keyboards can enter negative values."
   },
-  "knownHistoricalCaveat": {
-    "summary": "A historical screen showed entitlement 17.0, used 0.0, pending 0.0, but remaining 1.0 for one employee.",
-    "currentStatus": "Current DB state could not reproduce the issue.",
-    "confirmedCurrentState": "For WB-0014, leave_adjustment_days was 0 and there were no leave_requests at the time of investigation.",
-    "limitation": "Old adjustment logs were missing because the log write function had existed but was not called. The code now writes adjustment logs."
-  },
-  "recentImportantChanges": [
-    "KST date-boundary calculation was fixed in functions/lib/leave.ts.",
-    "Admin/Director employee cards show remaining leave and calculation basis.",
-    "Employee edit leave input now targets final remaining leave rather than raw adjustment.",
-    "Leave adjustment logs are written when adjustment changes.",
-    "Login rate limiting was intentionally removed.",
-    "Mobile negative leave input was fixed."
-  ],
   "keyFiles": {
     "readFirst": "READ_FIRST_FOR_CODEX.md",
     "apiRoutes": "functions/api/[[route]].ts",
@@ -139,7 +137,7 @@
     "types": "src/types.ts",
     "migrations": "migrations/"
   },
-  "recommendedNewCodexWorkflow": [
+  "recommendedWorkflow": [
     "Read READ_FIRST_FOR_CODEX.md.",
     "Read this project-context.json.",
     "Run git status --short.",
@@ -147,7 +145,9 @@
     "Make targeted edits only.",
     "Run npm test.",
     "Run npm run build.",
+    "Before deploying, run npx wrangler whoami and confirm the client Cloudflare account.",
     "Deploy with npm run cf:deploy only when requested or clearly needed.",
+    "Verify https://hospital-staff-leave-system-a6q.pages.dev after deployment.",
     "Commit and push to main when the user asks for GitHub sync."
   ]
 }

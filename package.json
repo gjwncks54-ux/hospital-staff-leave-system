@@ -10,7 +10,7 @@
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "cf:dev": "npm run build && wrangler pages dev dist",
-    "cf:deploy": "npm run build && wrangler pages deploy dist",
+    "cf:deploy": "npm run build && wrangler pages deploy dist --project-name hospital-staff-leave-system --branch main",
     "db:migrate:local": "wrangler d1 execute DB --local --file=./migrations/0001_init.sql",
     "db:seed:local": "wrangler d1 execute DB --local --file=./migrations/0002_seed.sql",
     "db:upgrade:local": "wrangler d1 execute DB --local --file=./migrations/0003_workflow_notices.sql",

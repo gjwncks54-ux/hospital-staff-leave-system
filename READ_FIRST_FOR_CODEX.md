@@ -5,13 +5,15 @@ This repository is an active hospital staff leave-management web app. Treat it a
 ## Project Snapshot
 
 - Project: Hospital Staff Leave Management System
-- Production URL: https://hospital-staff-leave-system.pages.dev
+- Production URL: https://hospital-staff-leave-system-a6q.pages.dev
 - GitHub repository: https://github.com/gjwncks54-ux/hospital-staff-leave-system
 - Default branch: `main`
 - Stack: React, Vite, TypeScript, Tailwind CSS, Zustand, Cloudflare Pages Functions, Hono, Cloudflare D1
 - Deployment command: `npm run cf:deploy`
 - Verification commands: `npm test`, `npm run build`
 - D1 binding: `DB`
+- Cloudflare account: `so7172@naver.com` / `17bcb091e79dc5a01cdcab39bc110c63`
+- D1 database: `hospital-staff-leave-db` / `92afa7e7-10b5-423a-a5ea-383af8a46b89`
 
 ## Non-Negotiable Rules
 
@@ -22,6 +24,9 @@ This repository is an active hospital staff leave-management web app. Treat it a
 - Do not use destructive Git commands such as `git reset --hard` unless the user explicitly asks and understands the impact.
 - After business-logic changes, run `npm test` and `npm run build`.
 - After deployment, verify the production URL responds.
+- Before deployment, verify `npx wrangler whoami` shows `so7172@naver.com` and account ID `17bcb091e79dc5a01cdcab39bc110c63`.
+- Do not deploy to or use the old developer-owned URL `https://hospital-staff-leave-system.pages.dev`.
+- Do not use the old developer-owned D1 database ID `5f524992-a63f-49a0-ad96-c0b9c09f3441`.
 - Prefer small, focused changes over broad rewrites.
 
 ## Current Product Behavior
@@ -89,7 +94,7 @@ There was a historical incident where one employee displayed `entitlement 17.0`,
 ## Database Safety
 
 - Before any production `UPDATE` or `DELETE`, run a `SELECT` to confirm exact target rows.
-- For production D1, use `npx wrangler d1 execute DB --remote --command "..."`
+- For production D1, use `npx wrangler d1 execute DB --remote --command "..."` only after confirming Wrangler is logged in to the client Cloudflare account.
 - Existing migrations that may already be applied should not be rewritten for production fixes. Add a new migration instead.
 - Employee mass changes should be generated and reviewed before execution.
 
@@ -115,6 +120,5 @@ There was a historical incident where one employee displayed `entitlement 17.0`,
 4. Make targeted edits.
 5. Run `npm test`.
 6. Run `npm run build`.
-7. If deploying, run `npm run cf:deploy`.
+7. If deploying, run `npm run cf:deploy` and verify `https://hospital-staff-leave-system-a6q.pages.dev`.
 8. If changes should persist for other machines, commit and push to `main`.
-

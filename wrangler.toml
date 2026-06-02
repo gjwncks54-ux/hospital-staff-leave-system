@@ -1,5 +1,4 @@
 name = "hospital-staff-leave-system"
-account_id = "17bcb091e79dc5a01cdcab39bc110c63"
 compatibility_date = "2026-04-08"
 pages_build_output_dir = "./dist"
 

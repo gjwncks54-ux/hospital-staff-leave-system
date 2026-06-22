@@ -34,6 +34,10 @@ type RankingRow = {
   rank: number;
 };
 
+type DiceEmployeeRow = {
+  joined_at: string;
+};
+
 function formatDateInZone(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
@@ -68,8 +72,12 @@ function getWeekdayUTC(dateString: string) {
   return new Date(`${dateString}T00:00:00Z`).getUTCDay();
 }
 
-function getEligibleRegularDates(monthStart: string, today: string) {
-  const startDate = maxDateString(monthStart, DICE_CREDIT_START_DATE);
+function getEligibleRegularDates(monthStart: string, today: string, joinedAt?: string) {
+  let startDate = maxDateString(monthStart, DICE_CREDIT_START_DATE);
+  if (joinedAt) {
+    startDate = maxDateString(startDate, joinedAt);
+  }
+
   const dates: string[] = [];
 
   for (let cursor = startDate; cursor <= today; cursor = addDays(cursor, 1)) {
@@ -127,7 +135,20 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
   const { monthStart, nextMonthStart } = getDiceMonthWindow(today);
-  const eligibleRegularDates = getEligibleRegularDates(monthStart, today);
+
+  const employee = await db
+    .prepare(
+      `
+        SELECT joined_at
+        FROM employees
+        WHERE employee_no = ?
+          AND is_active = 1
+      `,
+    )
+    .bind(employeeNo)
+    .first<DiceEmployeeRow>();
+
+  const eligibleRegularDates = employee ? getEligibleRegularDates(monthStart, today, employee.joined_at) : [];
 
   const [regularRollDates, bonusCount, recentRolls, todayBest] = await Promise.all([
     db
@@ -220,6 +241,22 @@ export async function rollDice(db: D1Database, employeeNo: string) {
   const { monthStart, nextMonthStart } = getDiceMonthWindow(today);
   const rollResult = createDiceRollResult();
 
+  const employee = await db
+    .prepare(
+      `
+        SELECT joined_at
+        FROM employees
+        WHERE employee_no = ?
+          AND is_active = 1
+      `,
+    )
+    .bind(employeeNo)
+    .first<DiceEmployeeRow>();
+
+  if (!employee) {
+    return { ok: false as const, message: "활성 직원 정보를 찾을 수 없습니다." };
+  }
+
   {
     const regularRollDates = await db
       .prepare(
@@ -237,7 +274,7 @@ export async function rollDice(db: D1Database, employeeNo: string) {
       .all<{ roll_date: string }>();
 
     const usedRegularDates = new Set(regularRollDates.results.map((row) => row.roll_date));
-    const targetDate = getEligibleRegularDates(monthStart, today).find((date) => !usedRegularDates.has(date));
+    const targetDate = getEligibleRegularDates(monthStart, today, employee.joined_at).find((date) => !usedRegularDates.has(date));
 
     if (!targetDate) {
       return { ok: false as const, message: "사용 가능한 누적 참여권이 없습니다." };

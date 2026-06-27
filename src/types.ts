@@ -163,6 +163,8 @@ export interface DiceStatus {
   regularAvailable: number;
   nextRegularRollDate: string | null;
   bonusAvailable: number;
+  rerollAvailableToday: boolean;
+  todayRerollUsed: boolean;
   totalAvailable: number;
   todayBestScore: number;
   todayAttempts: number;

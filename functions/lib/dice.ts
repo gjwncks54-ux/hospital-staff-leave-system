@@ -3,6 +3,9 @@ import type { EmployeeRecord } from "./db";
 const DICE_LOOKBACK_DAYS = 365;
 const DICE_TIME_ZONE = "Asia/Seoul";
 const DICE_CREDIT_START_DATE = "2026-05-23";
+const MONTHLY_REROLL_START_MONTH = "2026-07";
+const MONTHLY_REROLL_BONUS_COUNT = 5;
+const MONTHLY_REROLL_REASON_PREFIX = "monthly_reroll";
 
 type DiceBonusRow = {
   id: number;
@@ -89,6 +92,58 @@ function getEligibleRegularDates(monthStart: string, today: string, joinedAt?: s
   return dates;
 }
 
+function getMonthlyRerollReason(monthStart: string) {
+  return `${MONTHLY_REROLL_REASON_PREFIX}:${monthStart.slice(0, 7)}`;
+}
+
+function canReceiveMonthlyReroll(monthStart: string, joinedAt?: string) {
+  if (monthStart.slice(0, 7) < MONTHLY_REROLL_START_MONTH) {
+    return false;
+  }
+
+  if (!joinedAt) {
+    return false;
+  }
+
+  return joinedAt <= monthStart;
+}
+
+async function ensureMonthlyRerollBonuses(db: D1Database, employeeNo: string, monthStart: string, joinedAt?: string) {
+  if (!canReceiveMonthlyReroll(monthStart, joinedAt)) {
+    return;
+  }
+
+  const reason = getMonthlyRerollReason(monthStart);
+  const existing = await db
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM dice_bonuses
+        WHERE employee_no = ?
+          AND reason = ?
+      `,
+    )
+    .bind(employeeNo, reason)
+    .first<{ count: number }>();
+
+  const remaining = MONTHLY_REROLL_BONUS_COUNT - Number(existing?.count ?? 0);
+  if (remaining <= 0) {
+    return;
+  }
+
+  for (let index = 0; index < remaining; index += 1) {
+    await db
+      .prepare(
+        `
+          INSERT INTO dice_bonuses (employee_no, reason)
+          VALUES (?, ?)
+        `,
+      )
+      .bind(employeeNo, reason)
+      .run();
+  }
+}
+
 export function getDiceToday() {
   return formatDateInZone(new Date(), DICE_TIME_ZONE);
 }
@@ -149,8 +204,11 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
     .first<DiceEmployeeRow>();
 
   const eligibleRegularDates = employee ? getEligibleRegularDates(monthStart, today, employee.joined_at) : [];
+  if (employee) {
+    await ensureMonthlyRerollBonuses(db, employeeNo, monthStart, employee.joined_at);
+  }
 
-  const [regularRollDates, bonusCount, recentRolls, todayBest] = await Promise.all([
+  const [regularRollDates, bonusCount, recentRolls, todayBest, todayReroll] = await Promise.all([
     db
       .prepare(
         `
@@ -205,12 +263,26 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
       )
       .bind(employeeNo, today, cutoff)
       .first<{ best_score: number; attempts: number }>(),
+    db
+      .prepare(
+        `
+          SELECT COUNT(*) AS count
+          FROM dice_rolls
+          WHERE employee_no = ?
+            AND roll_kind = 'BONUS'
+            AND date(datetime(created_at, '+9 hours')) = date(?)
+            AND date(roll_date) >= date(?)
+        `,
+      )
+      .bind(employeeNo, today, cutoff)
+      .first<{ count: number }>(),
   ]);
 
   const usedRegularDates = new Set(regularRollDates.results.map((row) => row.roll_date));
   const availableRegularDates = eligibleRegularDates.filter((date) => !usedRegularDates.has(date));
   const normalAvailable = availableRegularDates.length > 0;
   const bonusAvailable = Number(bonusCount?.count ?? 0);
+  const todayRerollUsed = Number(todayReroll?.count ?? 0) > 0;
 
   return {
     today,
@@ -218,6 +290,8 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
     regularAvailable: availableRegularDates.length,
     nextRegularRollDate: availableRegularDates[0] ?? null,
     bonusAvailable,
+    rerollAvailableToday: bonusAvailable > 0 && !todayRerollUsed,
+    todayRerollUsed,
     totalAvailable: availableRegularDates.length + bonusAvailable,
     todayBestScore: Number(todayBest?.best_score ?? 0),
     todayAttempts: Number(todayBest?.attempts ?? 0),
@@ -320,6 +394,24 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
   const { monthStart, nextMonthStart } = getDiceMonthWindow(today);
   const rollResult = createDiceRollResult();
 
+  const employee = await db
+    .prepare(
+      `
+        SELECT joined_at
+        FROM employees
+        WHERE employee_no = ?
+          AND is_active = 1
+      `,
+    )
+    .bind(employeeNo)
+    .first<DiceEmployeeRow>();
+
+  if (!employee) {
+    return { ok: false as const, message: "활성 직원 정보를 찾을 수 없습니다." };
+  }
+
+  await ensureMonthlyRerollBonuses(db, employeeNo, monthStart, employee.joined_at);
+
   const targetRoll = requestedRollDate
     ? await db
         .prepare(
@@ -354,6 +446,25 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
 
   if (!targetRoll) {
     return { ok: false as const, message: "리롤할 주사위 기록이 없습니다." };
+  }
+
+  const todayReroll = await db
+    .prepare(
+      `
+        SELECT id
+        FROM dice_rolls
+        WHERE employee_no = ?
+          AND roll_kind = 'BONUS'
+          AND date(datetime(created_at, '+9 hours')) = date(?)
+          AND date(roll_date) >= date(?)
+        LIMIT 1
+      `,
+    )
+    .bind(employeeNo, today, cutoff)
+    .first<{ id: number }>();
+
+  if (todayReroll) {
+    return { ok: false as const, message: "리롤은 하루에 한 번만 사용할 수 있습니다." };
   }
 
   const availableBonus = await db

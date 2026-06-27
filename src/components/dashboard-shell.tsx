@@ -456,7 +456,7 @@ function DicePanel({
   const [rankingOpen, setRankingOpen] = useState(false);
   const latestRoll = lastRoll ?? status?.recentRolls[0] ?? null;
   const canRoll = Boolean(status && status.regularAvailable > 0);
-  const canReroll = Boolean(status && status.bonusAvailable > 0 && latestRoll);
+  const canReroll = Boolean(status && status.bonusAvailable > 0 && status.rerollAvailableToday && latestRoll);
   const displayDice: [number | "?", number | "?"] = rolling
     ? rollingFaces
     : [latestRoll?.dieOne ?? latestRoll?.rollValue ?? "?", latestRoll?.dieTwo ?? "?"];

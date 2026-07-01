@@ -456,7 +456,7 @@ function DicePanel({
   const [rankingOpen, setRankingOpen] = useState(false);
   const latestRoll = lastRoll ?? status?.recentRolls[0] ?? null;
   const canRoll = Boolean(status && status.regularAvailable > 0);
-  const canReroll = Boolean(status && status.bonusAvailable > 0 && status.rerollAvailableToday && latestRoll);
+  const canReroll = Boolean(status && status.rerollAvailableToday);
   const displayDice: [number | "?", number | "?"] = rolling
     ? rollingFaces
     : [latestRoll?.dieOne ?? latestRoll?.rollValue ?? "?", latestRoll?.dieTwo ?? "?"];
@@ -1130,7 +1130,7 @@ export function DashboardShell() {
 
   async function handleDiceReroll() {
     if (diceRolling) return;
-    const targetRollDate = lastDiceRoll?.rollDate ?? diceStatus?.recentRolls[0]?.rollDate;
+    const targetRollDate = diceStatus?.rerollTargetRollDate ?? lastDiceRoll?.rollDate;
     setDiceRolling(true);
     setLastDiceRoll(null);
     try {

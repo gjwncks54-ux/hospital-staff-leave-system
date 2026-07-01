@@ -208,7 +208,7 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
     await ensureMonthlyRerollBonuses(db, employeeNo, monthStart, employee.joined_at);
   }
 
-  const [regularRollDates, bonusCount, recentRolls, todayBest, todayReroll] = await Promise.all([
+  const [regularRollDates, bonusCount, recentRolls, todayBest, todayReroll, latestRegularCreatedToday] = await Promise.all([
     db
       .prepare(
         `
@@ -276,6 +276,23 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
       )
       .bind(employeeNo, today, cutoff)
       .first<{ count: number }>(),
+    db
+      .prepare(
+        `
+          SELECT id, roll_date
+          FROM dice_rolls
+          WHERE employee_no = ?
+            AND roll_kind = 'REGULAR'
+            AND date(datetime(created_at, '+9 hours')) = date(?)
+            AND date(roll_date) >= date(?)
+            AND date(roll_date) >= date(?)
+            AND date(roll_date) < date(?)
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+      )
+      .bind(employeeNo, today, cutoff, monthStart, nextMonthStart)
+      .first<{ id: number; roll_date: string }>(),
   ]);
 
   const usedRegularDates = new Set(regularRollDates.results.map((row) => row.roll_date));
@@ -283,6 +300,7 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
   const normalAvailable = availableRegularDates.length > 0;
   const bonusAvailable = Number(bonusCount?.count ?? 0);
   const todayRerollUsed = Number(todayReroll?.count ?? 0) > 0;
+  const rerollTargetRollDate = latestRegularCreatedToday?.roll_date ?? null;
 
   return {
     today,
@@ -290,7 +308,8 @@ export async function getDiceStatus(db: D1Database, employeeNo: string) {
     regularAvailable: availableRegularDates.length,
     nextRegularRollDate: availableRegularDates[0] ?? null,
     bonusAvailable,
-    rerollAvailableToday: bonusAvailable > 0 && !todayRerollUsed,
+    rerollAvailableToday: bonusAvailable > 0 && !todayRerollUsed && Boolean(rerollTargetRollDate),
+    rerollTargetRollDate,
     todayRerollUsed,
     totalAvailable: availableRegularDates.length + bonusAvailable,
     todayBestScore: Number(todayBest?.best_score ?? 0),
@@ -420,20 +439,8 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
             FROM dice_rolls
             WHERE employee_no = ?
               AND roll_date = ?
-              AND date(roll_date) >= date(?)
-              AND date(roll_date) >= date(?)
-              AND date(roll_date) < date(?)
-            LIMIT 1
-          `,
-        )
-        .bind(employeeNo, requestedRollDate, cutoff, monthStart, nextMonthStart)
-        .first<{ roll_date: string }>()
-    : await db
-        .prepare(
-          `
-            SELECT roll_date
-            FROM dice_rolls
-            WHERE employee_no = ?
+              AND roll_kind = 'REGULAR'
+              AND date(datetime(created_at, '+9 hours')) = date(?)
               AND date(roll_date) >= date(?)
               AND date(roll_date) >= date(?)
               AND date(roll_date) < date(?)
@@ -441,7 +448,24 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
             LIMIT 1
           `,
         )
-        .bind(employeeNo, cutoff, monthStart, nextMonthStart)
+        .bind(employeeNo, requestedRollDate, today, cutoff, monthStart, nextMonthStart)
+        .first<{ roll_date: string }>()
+    : await db
+        .prepare(
+          `
+            SELECT roll_date
+            FROM dice_rolls
+            WHERE employee_no = ?
+              AND roll_kind = 'REGULAR'
+              AND date(datetime(created_at, '+9 hours')) = date(?)
+              AND date(roll_date) >= date(?)
+              AND date(roll_date) >= date(?)
+              AND date(roll_date) < date(?)
+            ORDER BY created_at DESC
+            LIMIT 1
+          `,
+        )
+        .bind(employeeNo, today, cutoff, monthStart, nextMonthStart)
         .first<{ roll_date: string }>();
 
   if (!targetRoll) {

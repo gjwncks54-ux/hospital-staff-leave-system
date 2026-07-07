@@ -9,7 +9,7 @@ import {
   isFinalApprovedStatus,
   isInFlightStatus,
 } from "../lib/approval-flow";
-import { ApiError, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rerollDice as rerollDiceApi, rollDice as rollDiceApi } from "../lib/api";
+import { ApiError, fetchAppConfig, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rerollDice as rerollDiceApi, rollDice as rollDiceApi } from "../lib/api";
 import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
@@ -719,6 +719,8 @@ export function DashboardShell() {
   const [rollingDiceFaces, setRollingDiceFaces] = useState<[number, number]>([1, 2]);
   const [lastDiceRoll, setLastDiceRoll] = useState<DiceRollItem | null>(null);
   const [bonusGrantingEmployeeNo, setBonusGrantingEmployeeNo] = useState<string | null>(null);
+  const [lunchAppUrl, setLunchAppUrl] = useState("");
+  const [lunchAppEnabled, setLunchAppEnabled] = useState(false);
 
   function openHistoryTab() {
     setHistorySearch("");
@@ -746,6 +748,18 @@ export function DashboardShell() {
     lastRefreshRef.current = Date.now();
     void refresh(user.id, user.role);
   }, [refresh, user.id, user.role]);
+
+  useEffect(() => {
+    fetchAppConfig()
+      .then((config) => {
+        setLunchAppUrl(config.lunchAppUrl.trim());
+        setLunchAppEnabled(config.lunchAppEnabled === true);
+      })
+      .catch(() => {
+        setLunchAppUrl("");
+        setLunchAppEnabled(false);
+      });
+  }, []);
 
   useEffect(() => {
     void refreshDice();
@@ -1178,6 +1192,21 @@ export function DashboardShell() {
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-2">
+              {lunchAppUrl ? (
+                lunchAppEnabled ? (
+                  <a href="/api/lunch/sso-link" className="rounded-2xl bg-emerald-500 px-3.5 py-2.5 text-center text-sm font-semibold text-white shadow-sm">
+                    도시락 주문
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className="cursor-not-allowed rounded-2xl bg-slate-100 px-3.5 py-2.5 text-center text-sm font-semibold text-slate-400 ring-1 ring-slate-200"
+                  >
+                    도시락 주문
+                  </button>
+                )
+              ) : null}
               <button type="button" className="rounded-2xl bg-brand-slate px-3.5 py-2.5 text-sm font-semibold text-white" onClick={() => void logout()}>
                 로그아웃
               </button>

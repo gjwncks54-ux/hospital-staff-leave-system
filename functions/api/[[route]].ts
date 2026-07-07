@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { getApprovalStages, getNextPendingStage, getStatusAfterStage } from "../../src/lib/approval-flow";
-import { authGuard, clearSession, hashPassword, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
+import { authGuard, clearSession, createLunchSsoToken, hashPassword, serializeEmployee, setSession, verifyPassword } from "../lib/auth";
 import {
   countActiveDirectReports,
   createEmployeeForManagement,
@@ -45,8 +45,13 @@ import { handle } from "hono/cloudflare-pages";
 type AppEnv = {
   Bindings: {
     DB: D1Database;
+    FILES: R2Bucket;
     JWT_SECRET: string;
     SESSION_COOKIE_NAME?: string;
+    SESSION_COOKIE_DOMAIN?: string;
+    LUNCH_APP_URL?: string;
+    LUNCH_APP_ENABLED?: string;
+    LUNCH_SSO_SECRET?: string;
   };
   Variables: {
     employee: EmployeeRecord;
@@ -99,6 +104,7 @@ const diceRerollSchema = z
   .optional();
 const isHalfDayStep = (value: number) => Number.isFinite(value) && Math.abs(value * 2 - Math.round(value * 2)) < 1e-9;
 const roundLeaveDays = (value: number) => Number(value.toFixed(1));
+const enabledFlag = (value?: string) => ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
 
 const employeeUpdateSchema = z.object({
   joinedAt: z.string().regex(datePattern),
@@ -137,6 +143,24 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/api/health", (c) => c.json({ ok: true, date: "2026-04-16" }));
+
+app.get("/api/config", (c) =>
+  c.json({
+    lunchAppUrl: c.env.LUNCH_APP_URL?.trim() || "",
+    lunchAppEnabled: enabledFlag(c.env.LUNCH_APP_ENABLED),
+  }),
+);
+
+app.get("/api/lunch/sso-link", authGuard(), async (c) => {
+  const lunchAppUrl = c.env.LUNCH_APP_URL?.trim();
+  if (!lunchAppUrl) {
+    return c.json({ message: "도시락 앱 주소가 설정되지 않았습니다." }, 500);
+  }
+
+  const target = new URL(lunchAppUrl);
+  target.searchParams.set("sso_token", await createLunchSsoToken(c.env, c.get("employee")));
+  return c.redirect(target.toString(), 302);
+});
 
 app.post("/api/auth/login", async (c) => {
   try {

@@ -7,5 +7,12 @@ binding = "DB"
 database_name = "hospital-staff-leave-db"
 database_id = "92afa7e7-10b5-423a-a5ea-383af8a46b89"
 
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "hospital-staff-leave-files"
+
 [vars]
 SESSION_COOKIE_NAME = "hospital_leave_session"
+# Set these in Cloudflare Pages production variables after custom domains are ready.
+# SESSION_COOKIE_DOMAIN = ".your-hospital-domain.example"
+# LUNCH_APP_URL = "https://lunch.your-hospital-domain.example"

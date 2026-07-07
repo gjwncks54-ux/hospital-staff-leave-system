@@ -54,6 +54,10 @@ async function requestJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
 export { ApiError };
 
+export function fetchAppConfig() {
+  return requestJSON<{ lunchAppUrl: string; lunchAppEnabled: boolean }>("/api/config");
+}
+
 export function login(employeeNo: string, password: string) {
   return requestJSON<AuthResponse>("/api/auth/login", {
     method: "POST",

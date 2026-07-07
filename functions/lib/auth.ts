@@ -15,8 +15,11 @@ export interface SessionPayload extends JWTPayload {
 interface Env {
   Bindings: {
     DB: D1Database;
+    FILES: R2Bucket;
     JWT_SECRET: string;
     SESSION_COOKIE_NAME?: string;
+    SESSION_COOKIE_DOMAIN?: string;
+    LUNCH_SSO_SECRET?: string;
   };
   Variables: {
     employee: EmployeeRecord;
@@ -76,6 +79,11 @@ export function sessionCookieName(env: Env["Bindings"]) {
   return env.SESSION_COOKIE_NAME || "hospital_leave_session";
 }
 
+export function sessionCookieDomain(env: Env["Bindings"]) {
+  const domain = env.SESSION_COOKIE_DOMAIN?.trim();
+  return domain || undefined;
+}
+
 export async function createSessionToken(env: Env["Bindings"], employee: EmployeeRecord) {
   const payload: SessionPayload = {
     sub: employee.id,
@@ -88,6 +96,19 @@ export async function createSessionToken(env: Env["Bindings"], employee: Employe
   return sign(payload, env.JWT_SECRET, "HS256");
 }
 
+export async function createLunchSsoToken(env: Env["Bindings"], employee: EmployeeRecord) {
+  const secret = env.LUNCH_SSO_SECRET || env.JWT_SECRET;
+  const payload: SessionPayload = {
+    sub: employee.id,
+    employeeNo: employee.employee_no,
+    role: employee.role,
+    name: employee.name,
+    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 12,
+  };
+
+  return sign(payload, secret, "HS256");
+}
+
 export async function setSession(env: Env["Bindings"], url: string, employee: EmployeeRecord, c: Parameters<MiddlewareHandler<Env>>[0]) {
   const token = await createSessionToken(env, employee);
   const secure = new URL(url).protocol === "https:";
@@ -97,6 +118,7 @@ export async function setSession(env: Env["Bindings"], url: string, employee: Em
     sameSite: "Lax",
     secure,
     path: "/",
+    domain: sessionCookieDomain(env),
     maxAge: 60 * 60 * 12,
   });
 }
@@ -104,6 +126,7 @@ export async function setSession(env: Env["Bindings"], url: string, employee: Em
 export function clearSession(env: Env["Bindings"], c: Parameters<MiddlewareHandler<Env>>[0]) {
   deleteCookie(c, sessionCookieName(env), {
     path: "/",
+    domain: sessionCookieDomain(env),
   });
 }
 

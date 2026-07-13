@@ -15,4 +15,4 @@ bucket_name = "hospital-staff-leave-files"
 SESSION_COOKIE_NAME = "hospital_leave_session"
 # Set these in Cloudflare Pages production variables after custom domains are ready.
 # SESSION_COOKIE_DOMAIN = ".your-hospital-domain.example"
-# LUNCH_APP_URL = "https://lunch.your-hospital-domain.example"
+LUNCH_APP_URL = "https://hospital-lunch-order.so7172.workers.dev"

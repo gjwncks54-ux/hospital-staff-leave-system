@@ -50,7 +50,6 @@ type AppEnv = {
     SESSION_COOKIE_NAME?: string;
     SESSION_COOKIE_DOMAIN?: string;
     LUNCH_APP_URL?: string;
-    LUNCH_APP_ENABLED?: string;
     LUNCH_SSO_SECRET?: string;
   };
   Variables: {
@@ -104,7 +103,7 @@ const diceRerollSchema = z
   .optional();
 const isHalfDayStep = (value: number) => Number.isFinite(value) && Math.abs(value * 2 - Math.round(value * 2)) < 1e-9;
 const roundLeaveDays = (value: number) => Number(value.toFixed(1));
-const enabledFlag = (value?: string) => ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
+const LUNCH_APP_RELEASED = true;
 
 const employeeUpdateSchema = z.object({
   joinedAt: z.string().regex(datePattern),
@@ -147,7 +146,7 @@ app.get("/api/health", (c) => c.json({ ok: true, date: "2026-04-16" }));
 app.get("/api/config", (c) =>
   c.json({
     lunchAppUrl: c.env.LUNCH_APP_URL?.trim() || "",
-    lunchAppEnabled: enabledFlag(c.env.LUNCH_APP_ENABLED),
+    lunchAppEnabled: LUNCH_APP_RELEASED && Boolean(c.env.LUNCH_APP_URL?.trim()),
   }),
 );
 

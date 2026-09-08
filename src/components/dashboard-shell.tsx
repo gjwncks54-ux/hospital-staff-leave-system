@@ -10,6 +10,7 @@ import {
   isInFlightStatus,
 } from "../lib/approval-flow";
 import { ApiError, fetchAppConfig, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rerollDice as rerollDiceApi, rollDice as rollDiceApi } from "../lib/api";
+import { waitForDiceAnimation } from "../lib/dice-animation";
 import { BrandMark } from "./brand-mark";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
@@ -165,7 +166,6 @@ const emptyEmployeeForm: EmployeeFormState = {
   adjustmentReason: "",
 };
 const employeeRoleOptions: UserRole[] = ["USER", "LEADER", "HR", "ADMIN", "DIRECTOR"];
-const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 function formatOrgPath(path: string[]) {
   return path.length ? path.join(" > ") : "소속 미지정";
@@ -1129,7 +1129,7 @@ export function DashboardShell() {
     setDiceRolling(true);
     setLastDiceRoll(null);
     try {
-      const [response] = await Promise.all([rollDiceApi(), wait(2000)]);
+      const response = await waitForDiceAnimation(rollDiceApi());
       setLastDiceRoll(response.roll);
       setDiceStatus(response.status);
       setDiceRanking(response.ranking);
@@ -1149,7 +1149,7 @@ export function DashboardShell() {
     setDiceRolling(true);
     setLastDiceRoll(null);
     try {
-      const [response] = await Promise.all([rerollDiceApi({ rollDate: targetRollDate }), wait(2000)]);
+      const response = await waitForDiceAnimation(rerollDiceApi({ rollDate: targetRollDate }));
       setLastDiceRoll(response.roll);
       setDiceStatus(response.status);
       setDiceRanking(response.ranking);

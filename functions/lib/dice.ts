@@ -219,6 +219,8 @@ async function syncDiceMonthlyScore(db: D1Database, employeeNo: string, rollDate
             AND roll_score > 0
           GROUP BY roll_date
         )
+        -- Disambiguate SQLite UPSERT after INSERT ... SELECT.
+        WHERE true
         ON CONFLICT(month_start, employee_no) DO UPDATE SET
           score = excluded.score,
           rolls = excluded.rolls,

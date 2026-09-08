@@ -42,6 +42,7 @@ const AUTO_REFRESH_THROTTLE_MS = 3000;
 const APPROVAL_POLL_MS = 60000;
 const HISTORY_PAGE_SIZE = 10;
 const ONE_STEP_URL = "https://docs.google.com/forms/d/1qPrhTSkEeb57nMpXtLtzGkOjSo68mom49RPvyb_g5AM/edit";
+const SPECIAL_CHECKUP_URL = "https://forms.gle/JS3AtbmhSgmUjEME8";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "home", label: "홈" },
@@ -1192,6 +1193,9 @@ export function DashboardShell() {
               </p>
             </div>
             <div className="flex shrink-0 flex-col gap-2">
+              <a href={SPECIAL_CHECKUP_URL} target="_blank" rel="noreferrer" className="rounded-2xl bg-rose px-3.5 py-2.5 text-center text-sm font-semibold text-white shadow-sm shadow-rose/25 ring-1 ring-rose/10">
+                직원특별검진
+              </a>
               {lunchAppUrl ? (
                 lunchAppEnabled ? (
                   <a href="/api/lunch/sso-link" className="rounded-2xl bg-emerald-500 px-3.5 py-2.5 text-center text-sm font-semibold text-white shadow-sm">

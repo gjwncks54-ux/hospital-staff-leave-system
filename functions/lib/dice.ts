@@ -230,6 +230,57 @@ async function syncDiceMonthlyScore(db: D1Database, employeeNo: string, rollDate
     .run();
 }
 
+async function syncStaleDiceMonthlyScores(db: D1Database, monthStart: string, nextMonthStart: string) {
+  await db
+    .prepare(
+      `
+        WITH stale_employees AS (
+          SELECT
+            dr.employee_no
+          FROM dice_rolls dr
+          LEFT JOIN dice_monthly_scores dms
+            ON dms.month_start = ?
+           AND dms.employee_no = dr.employee_no
+          WHERE date(dr.roll_date) >= date(?)
+            AND date(dr.roll_date) < date(?)
+            AND dr.roll_score > 0
+          GROUP BY dr.employee_no, dms.updated_at
+          HAVING dms.updated_at IS NULL
+             OR MAX(dr.created_at) > dms.updated_at
+        )
+        INSERT INTO dice_monthly_scores (month_start, employee_no, score, rolls, attempts, updated_at)
+        SELECT
+          ?,
+          employee_no,
+          COALESCE(SUM(daily_score), 0),
+          COUNT(*),
+          COALESCE(SUM(attempts), 0),
+          CURRENT_TIMESTAMP
+        FROM (
+          SELECT
+            dr.employee_no,
+            dr.roll_date,
+            MAX(dr.roll_score) AS daily_score,
+            COUNT(*) AS attempts
+          FROM dice_rolls dr
+          WHERE date(dr.roll_date) >= date(?)
+            AND date(dr.roll_date) < date(?)
+            AND dr.roll_score > 0
+            AND dr.employee_no IN (SELECT employee_no FROM stale_employees)
+          GROUP BY dr.employee_no, dr.roll_date
+        )
+        GROUP BY employee_no
+        ON CONFLICT(month_start, employee_no) DO UPDATE SET
+          score = excluded.score,
+          rolls = excluded.rolls,
+          attempts = excluded.attempts,
+          updated_at = CURRENT_TIMESTAMP
+      `,
+    )
+    .bind(monthStart, monthStart, nextMonthStart, monthStart, monthStart, nextMonthStart)
+    .run();
+}
+
 export async function getDiceStatus(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
@@ -593,6 +644,7 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
 
 export async function getDiceRanking(db: D1Database, employeeNo: string) {
   const { monthStart, nextMonthStart } = getDiceMonthWindow();
+  await syncStaleDiceMonthlyScores(db, monthStart, nextMonthStart);
 
   const topRows = await db
     .prepare(

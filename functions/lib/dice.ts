@@ -37,6 +37,14 @@ type RankingRow = {
   rank: number;
 };
 
+type MonthlyScoreRow = {
+  employee_no: string;
+  employee_name: string | null;
+  score: number;
+  rolls: number;
+  rank: number;
+};
+
 type DiceEmployeeRow = {
   joined_at: string;
 };
@@ -184,6 +192,42 @@ export function getDiceMonthWindow(today = getDiceToday()) {
     monthStart,
     nextMonthStart: addMonths(monthStart, 1),
   };
+}
+
+async function syncDiceMonthlyScore(db: D1Database, employeeNo: string, rollDate: string) {
+  const { monthStart, nextMonthStart } = getDiceMonthWindow(rollDate);
+  await db
+    .prepare(
+      `
+        INSERT INTO dice_monthly_scores (month_start, employee_no, score, rolls, attempts, updated_at)
+        SELECT
+          ?,
+          ?,
+          COALESCE(SUM(daily_score), 0),
+          COUNT(*),
+          COALESCE(SUM(attempts), 0),
+          CURRENT_TIMESTAMP
+        FROM (
+          SELECT
+            roll_date,
+            MAX(roll_score) AS daily_score,
+            COUNT(*) AS attempts
+          FROM dice_rolls
+          WHERE employee_no = ?
+            AND date(roll_date) >= date(?)
+            AND date(roll_date) < date(?)
+            AND roll_score > 0
+          GROUP BY roll_date
+        )
+        ON CONFLICT(month_start, employee_no) DO UPDATE SET
+          score = excluded.score,
+          rolls = excluded.rolls,
+          attempts = excluded.attempts,
+          updated_at = CURRENT_TIMESTAMP
+      `,
+    )
+    .bind(monthStart, employeeNo, employeeNo, monthStart, nextMonthStart)
+    .run();
 }
 
 export async function getDiceStatus(db: D1Database, employeeNo: string) {
@@ -399,6 +443,8 @@ export async function rollDice(db: D1Database, employeeNo: string) {
       return { ok: false as const, message: "해당 날짜의 일반 참여권은 이미 사용되었습니다." };
     }
 
+    await syncDiceMonthlyScore(db, employeeNo, targetDate);
+
     return {
       ok: true as const,
       roll: { id: Number(insertRegularRoll.meta.last_row_id), rollDate: targetDate, rollValue: rollResult.dieOne, ...rollResult, source: "DAILY" as const },
@@ -537,6 +583,8 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
     .bind(employeeNo, targetRoll.roll_date, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, availableBonus.id)
     .run();
 
+  await syncDiceMonthlyScore(db, employeeNo, targetRoll.roll_date);
+
   return {
     ok: true as const,
     roll: { id: Number(insertRoll.meta.last_row_id), rollDate: targetRoll.roll_date, rollValue: rollResult.dieOne, ...rollResult, source: "BONUS" as const },
@@ -544,81 +592,54 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
 }
 
 export async function getDiceRanking(db: D1Database, employeeNo: string) {
-  const cutoff = getDiceCutoffDate();
   const { monthStart, nextMonthStart } = getDiceMonthWindow();
 
   const topRows = await db
     .prepare(
       `
-        WITH daily_best AS (
+        WITH ranked_scores AS (
           SELECT
-            dr.employee_no,
-            dr.roll_date,
-            MAX(dr.roll_score) AS daily_score,
-            COUNT(*) AS attempts
-          FROM dice_rolls dr
-          WHERE date(dr.roll_date) >= date(?)
-            AND date(dr.roll_date) >= date(?)
-            AND date(dr.roll_date) < date(?)
-            AND dr.roll_score > 0
-          GROUP BY dr.employee_no, dr.roll_date
-        ),
-        monthly_scores AS (
-          SELECT
-            db.employee_no,
-            COALESCE(e.name, db.employee_no) AS employee_name,
-            SUM(db.daily_score) AS score,
-            COUNT(*) AS rolls,
-            SUM(db.attempts) AS attempts,
-            DENSE_RANK() OVER (ORDER BY SUM(db.daily_score) DESC) AS rank
-          FROM daily_best db
-          LEFT JOIN employees e ON e.employee_no = db.employee_no
-          GROUP BY db.employee_no
+            dms.employee_no,
+            COALESCE(e.name, dms.employee_no) AS employee_name,
+            dms.score,
+            dms.rolls,
+            DENSE_RANK() OVER (ORDER BY dms.score DESC) AS rank
+          FROM dice_monthly_scores dms
+          LEFT JOIN employees e ON e.employee_no = dms.employee_no
+          WHERE dms.month_start = ?
+            AND dms.score > 0
         )
         SELECT employee_no, employee_name, score, rolls, rank
-        FROM monthly_scores
+        FROM ranked_scores
         WHERE rank <= 3
         ORDER BY rank ASC, employee_name ASC, employee_no ASC
       `,
     )
-    .bind(cutoff, monthStart, nextMonthStart)
-    .all<RankingRow>();
+    .bind(monthStart)
+    .all<MonthlyScoreRow>();
 
   const myRank = await db
     .prepare(
       `
-        WITH daily_best AS (
+        WITH ranked_scores AS (
           SELECT
-            dr.employee_no,
-            dr.roll_date,
-            MAX(dr.roll_score) AS daily_score,
-            COUNT(*) AS attempts
-          FROM dice_rolls dr
-          WHERE date(dr.roll_date) >= date(?)
-            AND date(dr.roll_date) >= date(?)
-            AND date(dr.roll_date) < date(?)
-            AND dr.roll_score > 0
-          GROUP BY dr.employee_no, dr.roll_date
-        ),
-        monthly_scores AS (
-          SELECT
-            db.employee_no,
-            COALESCE(e.name, db.employee_no) AS employee_name,
-            SUM(db.daily_score) AS score,
-            COUNT(*) AS rolls,
-            SUM(db.attempts) AS attempts,
-            DENSE_RANK() OVER (ORDER BY SUM(db.daily_score) DESC) AS rank
-          FROM daily_best db
-          LEFT JOIN employees e ON e.employee_no = db.employee_no
-          GROUP BY db.employee_no
+            dms.employee_no,
+            COALESCE(e.name, dms.employee_no) AS employee_name,
+            dms.score,
+            dms.rolls,
+            DENSE_RANK() OVER (ORDER BY dms.score DESC) AS rank
+          FROM dice_monthly_scores dms
+          LEFT JOIN employees e ON e.employee_no = dms.employee_no
+          WHERE dms.month_start = ?
+            AND dms.score > 0
         )
         SELECT employee_no, employee_name, score, rolls, rank
-        FROM monthly_scores
+        FROM ranked_scores
         WHERE employee_no = ?
       `,
     )
-    .bind(cutoff, monthStart, nextMonthStart, employeeNo)
-    .first<RankingRow>();
+    .bind(monthStart, employeeNo)
+    .first<MonthlyScoreRow>();
 
   const toRankingItem = (row: RankingRow) => ({
     employeeNo: row.employee_no,

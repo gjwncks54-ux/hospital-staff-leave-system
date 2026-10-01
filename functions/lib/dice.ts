@@ -194,95 +194,6 @@ export function getDiceMonthWindow(today = getDiceToday()) {
   };
 }
 
-async function syncDiceMonthlyScore(db: D1Database, employeeNo: string, rollDate: string) {
-  const { monthStart, nextMonthStart } = getDiceMonthWindow(rollDate);
-  await db
-    .prepare(
-      `
-        INSERT INTO dice_monthly_scores (month_start, employee_no, score, rolls, attempts, updated_at)
-        SELECT
-          ?,
-          ?,
-          COALESCE(SUM(daily_score), 0),
-          COUNT(*),
-          COALESCE(SUM(attempts), 0),
-          CURRENT_TIMESTAMP
-        FROM (
-          SELECT
-            roll_date,
-            MAX(roll_score) AS daily_score,
-            COUNT(*) AS attempts
-          FROM dice_rolls
-          WHERE employee_no = ?
-            AND date(roll_date) >= date(?)
-            AND date(roll_date) < date(?)
-            AND roll_score > 0
-          GROUP BY roll_date
-        )
-        -- Disambiguate SQLite UPSERT after INSERT ... SELECT.
-        WHERE true
-        ON CONFLICT(month_start, employee_no) DO UPDATE SET
-          score = excluded.score,
-          rolls = excluded.rolls,
-          attempts = excluded.attempts,
-          updated_at = CURRENT_TIMESTAMP
-      `,
-    )
-    .bind(monthStart, employeeNo, employeeNo, monthStart, nextMonthStart)
-    .run();
-}
-
-async function syncStaleDiceMonthlyScores(db: D1Database, monthStart: string, nextMonthStart: string) {
-  await db
-    .prepare(
-      `
-        WITH stale_employees AS (
-          SELECT
-            dr.employee_no
-          FROM dice_rolls dr
-          LEFT JOIN dice_monthly_scores dms
-            ON dms.month_start = ?
-           AND dms.employee_no = dr.employee_no
-          WHERE date(dr.roll_date) >= date(?)
-            AND date(dr.roll_date) < date(?)
-            AND dr.roll_score > 0
-          GROUP BY dr.employee_no, dms.updated_at
-          HAVING dms.updated_at IS NULL
-             OR MAX(dr.created_at) > dms.updated_at
-        )
-        INSERT INTO dice_monthly_scores (month_start, employee_no, score, rolls, attempts, updated_at)
-        SELECT
-          ?,
-          employee_no,
-          COALESCE(SUM(daily_score), 0),
-          COUNT(*),
-          COALESCE(SUM(attempts), 0),
-          CURRENT_TIMESTAMP
-        FROM (
-          SELECT
-            dr.employee_no,
-            dr.roll_date,
-            MAX(dr.roll_score) AS daily_score,
-            COUNT(*) AS attempts
-          FROM dice_rolls dr
-          WHERE date(dr.roll_date) >= date(?)
-            AND date(dr.roll_date) < date(?)
-            AND dr.roll_score > 0
-            AND dr.employee_no IN (SELECT employee_no FROM stale_employees)
-          GROUP BY dr.employee_no, dr.roll_date
-        )
-        GROUP BY employee_no
-        ON CONFLICT(month_start, employee_no) DO UPDATE SET
-          score = excluded.score,
-          rolls = excluded.rolls,
-          attempts = excluded.attempts,
-          updated_at = CURRENT_TIMESTAMP
-      `,
-    )
-    .bind(monthStart, monthStart, nextMonthStart, monthStart, monthStart, nextMonthStart)
-    .run();
-}
-
 export async function getDiceStatus(db: D1Database, employeeNo: string) {
   const today = getDiceToday();
   const cutoff = getDiceCutoffDate();
@@ -496,8 +407,6 @@ export async function rollDice(db: D1Database, employeeNo: string) {
       return { ok: false as const, message: "해당 날짜의 일반 참여권은 이미 사용되었습니다." };
     }
 
-    await syncDiceMonthlyScore(db, employeeNo, targetDate);
-
     return {
       ok: true as const,
       roll: { id: Number(insertRegularRoll.meta.last_row_id), rollDate: targetDate, rollValue: rollResult.dieOne, ...rollResult, source: "DAILY" as const },
@@ -636,8 +545,6 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
     .bind(employeeNo, targetRoll.roll_date, rollResult.dieOne, rollResult.dieOne, rollResult.dieTwo, rollResult.isDouble ? 1 : 0, rollResult.rollScore, availableBonus.id)
     .run();
 
-  await syncDiceMonthlyScore(db, employeeNo, targetRoll.roll_date);
-
   return {
     ok: true as const,
     roll: { id: Number(insertRoll.meta.last_row_id), rollDate: targetRoll.roll_date, rollValue: rollResult.dieOne, ...rollResult, source: "BONUS" as const },
@@ -645,8 +552,7 @@ export async function rerollDice(db: D1Database, employeeNo: string, requestedRo
 }
 
 export async function getDiceRanking(db: D1Database, employeeNo: string) {
-  const { monthStart, nextMonthStart } = getDiceMonthWindow();
-  await syncStaleDiceMonthlyScores(db, monthStart, nextMonthStart);
+  const { monthStart } = getDiceMonthWindow();
 
   const topRows = await db
     .prepare(

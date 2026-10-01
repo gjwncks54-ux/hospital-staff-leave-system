@@ -18,11 +18,13 @@ const { app } = await import("../../functions/api/[[route]]");
 let sqlite;
 let db;
 let faces;
+let preparedSql;
 
 // Execute the production SQL against real SQLite instead of mocking its results.
 function sqliteBinding(database) {
   return {
     prepare(sql) {
+      preparedSql.push(sql);
       let parameters = [];
       return {
         bind(...values) {
@@ -64,6 +66,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-09T01:00:00Z"));
   faces = [];
+  preparedSql = [];
   vi.stubGlobal("crypto", {
     getRandomValues(array) {
       array[0] = (faces.shift() ?? 1) - 1;
@@ -74,7 +77,7 @@ beforeEach(() => {
   expect(sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master").get()?.count).toBe(0);
   sqlite.function("current_timestamp", () => new Date().toISOString().replace("T", " ").slice(0, 19));
   sqlite.exec("CREATE TABLE employees (employee_no TEXT PRIMARY KEY, name TEXT, joined_at TEXT, is_active INTEGER)");
-  for (const migration of ["0013_dice_game.sql", "0014_double_dice_score.sql", "0015_dice_monthly_scores.sql"]) {
+  for (const migration of ["0013_dice_game.sql", "0014_double_dice_score.sql", "0015_dice_monthly_scores.sql", "0016_atomic_dice_monthly_scores.sql"]) {
     sqlite.exec(readFileSync(new URL(`../../migrations/${migration}`, import.meta.url), "utf8"));
   }
   sqlite.exec("INSERT INTO employees VALUES ('DICE_TEST', 'Dice Test', '2026-09-01', 1)");
@@ -161,5 +164,29 @@ describe("dice score persistence", () => {
       { month_start: "2026-08-01", employee_no: "DICE_TEST", score: 100 },
       { month_start: "2026-09-01", employee_no: "OTHER_TEST", score: 12 },
     ]);
+  });
+
+  it("starts a separate score row when a new month begins", async () => {
+    vi.setSystemTime(new Date("2026-10-01T01:00:00Z"));
+    const response = await request("roll", [2, 3]);
+    expect(response.status).toBe(201);
+    expect((await response.json()).roll.rollDate).toBe("2026-10-01");
+    expect(sqlite.prepare("SELECT score, rolls, attempts FROM dice_monthly_scores WHERE employee_no = 'DICE_TEST' AND month_start = '2026-10-01'").get()).toEqual({ score: 5, rolls: 1, attempts: 1 });
+    expect(monthlyScore()).toBeUndefined();
+  });
+
+  it("updates the monthly score in the same database insert", () => {
+    sqlite.exec(`
+      INSERT INTO dice_rolls (employee_no, roll_date, roll_value, die_one, die_two, is_double, roll_score, roll_kind)
+      VALUES ('DICE_TEST', '2026-09-09', 4, 4, 5, 0, 9, 'REGULAR')
+    `);
+    expect(monthlyScore()).toEqual({ score: 9, rolls: 1, attempts: 1 });
+  });
+
+  it("reads rankings only from the compact monthly score table", async () => {
+    sqlite.exec("INSERT INTO dice_monthly_scores (month_start, employee_no, score, rolls, attempts) VALUES ('2026-09-01', 'DICE_TEST', 9, 1, 1)");
+    preparedSql = [];
+    expect((await request("ranking")).status).toBe(200);
+    expect(preparedSql.some((sql) => sql.includes("dice_rolls"))).toBe(false);
   });
 });

@@ -189,6 +189,34 @@ function calculateCumulativeEntitlement(joinedAt: string, rows: LeaveBalanceRow[
   return entitlement;
 }
 
+function buildAccrualEvents(joinedAt: string, rows: LeaveBalanceRow[], asOf: Date): LeaveSummary["accrualEvents"] {
+  const asOfDate = formatKstDate(asOf);
+  const completedMonths = completedMonthsUnderOneYear(joinedAt, asOfDate);
+  const unpaidRows = rows.filter(
+    (row) => row.type === "UNPAID" && row.status !== "REJECTED" && row.status !== "CANCELLED",
+  );
+  const events: LeaveSummary["accrualEvents"] = [];
+
+  for (let monthIndex = 0; monthIndex < completedMonths; monthIndex += 1) {
+    const periodStart = addMonthsClamped(joinedAt, monthIndex);
+    const periodEnd = addMonthsClamped(joinedAt, monthIndex + 1);
+    const blocked = unpaidRows.some((row) => overlapsRange(row.start_date, row.end_date, periodStart, periodEnd));
+    events.push({ date: formatDate(periodEnd), kind: "MONTHLY", days: blocked ? 0 : 1, status: blocked ? "BLOCKED" : "GRANTED" });
+  }
+
+  const serviceYears = fullYearsBetween(joinedAt, asOfDate);
+  for (let years = 1; years <= serviceYears; years += 1) {
+    events.push({
+      date: formatDate(addYearsClamped(joinedAt, years)),
+      kind: "ANNUAL",
+      days: annualGrantForServiceYears(years),
+      status: "GRANTED",
+    });
+  }
+
+  return events.sort((a, b) => b.date.localeCompare(a.date));
+}
+
 function buildConsumedLeaveTotals(
   role: UserRole,
   hasLeader: boolean,
@@ -292,6 +320,7 @@ export function buildLeaveSummary(
     remaining,
     serviceYears: cycle.serviceYears,
     joinedAt,
+    accrualEvents: buildAccrualEvents(joinedAt, rows, asOf),
   };
 
   return summary;

@@ -12,6 +12,8 @@ import {
 import { ApiError, fetchAppConfig, fetchDiceRanking, fetchDiceStatus, fetchEmployeeLeaveExport, grantDiceBonus, rerollDice as rerollDiceApi, rollDice as rollDiceApi } from "../lib/api";
 import { waitForDiceAnimation } from "../lib/dice-animation";
 import { BrandMark } from "./brand-mark";
+import { AccrualHistoryModal } from "./accrual-history-modal";
+import { LeaveDetailModal } from "./leave-detail-modal";
 import { RequestModal } from "./request-modal";
 import { useAuthStore } from "../stores/auth-store";
 import { useLeaveStore } from "../stores/leave-store";
@@ -695,6 +697,8 @@ export function DashboardShell() {
 
   const [activeTab, setActiveTab] = useState<TabKey>("home");
   const [requestOpen, setRequestOpen] = useState(false);
+  const [accrualHistoryOpen, setAccrualHistoryOpen] = useState(false);
+  const [leaveDetailMode, setLeaveDetailMode] = useState<"USED" | "PENDING" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState("");
   const [historyFilter, setHistoryFilter] = useState<HistoryFilterKey>("ALL");
@@ -1259,9 +1263,12 @@ export function DashboardShell() {
                 <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white/90">{loading ? "동기화 중" : roleLabel(user.role)}</span>
               </div>
               <div className="mt-6 grid grid-cols-3 gap-3">
-                <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">부여</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.entitlement) : "--"}</p></div>
-                <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">사용</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(getDisplayUsedDays(summary)) : "--"}</p></div>
-                <div className="rounded-[1.4rem] bg-white/12 px-3 py-3"><p className="text-xs text-white/70">예정</p><p className="mt-2 text-2xl font-semibold">{summary ? formatNumber(summary.pending) : "--"}</p></div>
+                <button type="button" className="rounded-[1.4rem] bg-white/12 px-3 py-3 text-left transition hover:bg-white/18 focus:outline-none focus:ring-2 focus:ring-white/70" onClick={() => setAccrualHistoryOpen(true)} aria-label="연차와 월차 발생 내역 보기">
+                  <span className="block text-xs text-white/70">부여</span>
+                  <span className="mt-2 block text-2xl font-semibold">{summary ? formatNumber(summary.entitlement) : "--"}</span>
+                </button>
+                <button type="button" className="rounded-[1.4rem] bg-white/12 px-3 py-3 text-left transition hover:bg-white/18 focus:outline-none focus:ring-2 focus:ring-white/70" onClick={() => setLeaveDetailMode("USED")} aria-label="연차 사용 내역 보기"><span className="block text-xs text-white/70">사용</span><span className="mt-2 block text-2xl font-semibold">{summary ? formatNumber(getDisplayUsedDays(summary)) : "--"}</span></button>
+                <button type="button" className="rounded-[1.4rem] bg-white/12 px-3 py-3 text-left transition hover:bg-white/18 focus:outline-none focus:ring-2 focus:ring-white/70" onClick={() => setLeaveDetailMode("PENDING")} aria-label="연차 예정 내역 보기"><span className="block text-xs text-white/70">예정</span><span className="mt-2 block text-2xl font-semibold">{summary ? formatNumber(summary.pending) : "--"}</span></button>
               </div>
             </article>
 
@@ -1798,6 +1805,9 @@ export function DashboardShell() {
         }}
         userRole={user.role}
       />
+
+      <AccrualHistoryModal open={accrualHistoryOpen} summary={summary} onClose={() => setAccrualHistoryOpen(false)} />
+      <LeaveDetailModal mode={leaveDetailMode} summary={summary} history={history} employeeId={user.id} onClose={() => setLeaveDetailMode(null)} />
 
       {toast ? <div className="fixed bottom-24 left-1/2 z-[60] -translate-x-1/2 rounded-full bg-brand-slate px-4 py-2 text-sm text-white shadow-lg shadow-brand-slate/20">{toast}</div> : null}
     </div>

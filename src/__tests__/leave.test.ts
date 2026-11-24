@@ -146,6 +146,31 @@ describe("buildLeaveSummary — Fix 4 regression: pending UNPAID must block mont
     const summary = buildLeaveSummary(joinedAt, "USER", false, rows, 0, asOf);
     expect(summary.entitlement).toBe(2); // months 0 and 3 are clear
   });
+
+  it("explains granted and blocked monthly accrual without changing entitlement", () => {
+    const rows = [
+      { type: "UNPAID" as const, status: "APPROVED_HR" as const, amount: 2, start_date: "2025-03-10", end_date: "2025-03-11" },
+    ];
+    const summary = buildLeaveSummary("2025-01-01", "USER", false, rows, 0, kst("2025-04-01"));
+
+    expect(summary.accrualEvents).toEqual([
+      { date: "2025-04-01", kind: "MONTHLY", days: 0, status: "BLOCKED" },
+      { date: "2025-03-01", kind: "MONTHLY", days: 1, status: "GRANTED" },
+      { date: "2025-02-01", kind: "MONTHLY", days: 1, status: "GRANTED" },
+    ]);
+    expect(summary.accrualEvents.reduce((total, event) => total + event.days, 0)).toBe(summary.entitlement);
+  });
+});
+
+describe("buildLeaveSummary — accrual history", () => {
+  it("lists cumulative annual grants and excludes adjustments from automatic accrual", () => {
+    const summary = buildLeaveSummary("2020-09-23", "USER", false, [], 3, kst("2026-11-24"));
+    const grantedDays = summary.accrualEvents.reduce((total, event) => total + event.days, 0);
+
+    expect(summary.accrualEvents[0]).toEqual({ date: "2026-09-23", kind: "ANNUAL", days: 17, status: "GRANTED" });
+    expect(grantedDays).toBe(summary.entitlement);
+    expect(summary.remaining).toBe(summary.entitlement + 3);
+  });
 });
 
 describe("buildLeaveSummary — Fix 3 regression: month-end clamping (addMonthsClamped)", () => {

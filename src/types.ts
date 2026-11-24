@@ -23,6 +23,14 @@ export interface LeaveSummary {
   remaining: number;
   serviceYears: number;
   joinedAt: string;
+  accrualEvents: LeaveAccrualEvent[];
+}
+
+export interface LeaveAccrualEvent {
+  date: string;
+  kind: "MONTHLY" | "ANNUAL";
+  days: number;
+  status: "GRANTED" | "BLOCKED";
 }
 
 export interface LeaveRequestItem {
